@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { BiomeProperties } from './biomes';
 import {
   getMoraleLabel, getWeightMultiplier, createStats, updateStats,
-  FOOD_CAPACITY_LBS, WATER_CAPACITY_GAL, TIMBER_CAPACITY, MINERALS_CAPACITY,
+  FOOD_CAPACITY_LBS, WATER_CAPACITY_GAL, MINERALS_CAPACITY,
   SECONDS_PER_DAY,
 } from './playerStats';
 
@@ -55,10 +55,10 @@ describe('getWeightMultiplier', () => {
     expect(getWeightMultiplier(stats)).toBe(0.5);
   });
 
-  it('is unaffected by timber and minerals', () => {
+  it('is unaffected by minerals', () => {
     const stats = createStats();
     stats.food = 0; stats.water = 0;
-    stats.timber = TIMBER_CAPACITY; stats.minerals = MINERALS_CAPACITY;
+    stats.minerals = MINERALS_CAPACITY;
     expect(getWeightMultiplier(stats)).toBe(1.0);
   });
 });
@@ -68,7 +68,6 @@ describe('getWeightMultiplier', () => {
 describe('createStats', () => {
   it('initializes all resource fields', () => {
     const stats = createStats();
-    expect(stats.timber).toBe(0);
     expect(stats.minerals).toBe(0);
     expect(stats.health).toBe(100);
     expect(stats.energy).toBe(100);
@@ -111,34 +110,30 @@ describe('updateStats movement drain', () => {
   });
 });
 
-// ─── updateStats — build action timber deduction ─────────────────────────────
+// ─── updateStats — build action ───────────────────────────────────────────────
 
 describe('updateStats build action', () => {
-  it('deducts timber once per in-game hour crossed', () => {
+  it('advances progressDays while building', () => {
     const stats = createStats();
-    stats.timber = 10;
     stats.daysTraveled = 12 / 24; // noon (daylight)
-    const timberPerHour = 10 / 24;
     stats.activeAction = {
       id: 'build_canoe',
       label: 'Building canoe',
       durationDays: 1,
       progressDays: 0,
       structureIndex: 0,
-      timberPerHour,
+      timberPerHour: 10 / 24,
     };
 
-    // Advance exactly 1 in-game hour (1/24 of a day)
-    const oneDayInRealSecs = SECONDS_PER_DAY;
-    const oneHourDelta = oneDayInRealSecs / 24; // real seconds = 1 game hour
+    const oneHourDelta = SECONDS_PER_DAY / 24;
     updateStats(stats, oneHourDelta, 0, plainsBiome);
 
-    expect(stats.timber).toBeCloseTo(10 - timberPerHour, 5);
+    // progressDays should have advanced by 1/24 of a day
+    expect(stats.activeAction?.progressDays).toBeCloseTo(1 / 24, 4);
   });
 
   it('nulls the action when progressDays reaches durationDays', () => {
     const stats = createStats();
-    stats.timber = 10;
     stats.daysTraveled = 12 / 24;
     stats.activeAction = {
       id: 'build_canoe',
@@ -149,7 +144,6 @@ describe('updateStats build action', () => {
       timberPerHour: 10 / 24,
     };
 
-    // Advance enough to complete (more than 1/24 of a day)
     updateStats(stats, SECONDS_PER_DAY / 24 + 0.1, 0, plainsBiome);
 
     expect(stats.activeAction).toBeNull();
@@ -157,7 +151,6 @@ describe('updateStats build action', () => {
 
   it('stops the build action at night', () => {
     const stats = createStats();
-    stats.timber = 10;
     stats.daysTraveled = 20 / 24; // 8 PM — just at sunset
     stats.activeAction = {
       id: 'build_shelter',

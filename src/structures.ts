@@ -38,6 +38,60 @@ function getContentRect(canvas: HTMLCanvasElement) {
   return { x, y, w, h };
 }
 
+export class DroppedCanoeManager {
+  private items: { tileX: number; tileY: number; el: HTMLDivElement }[] = [];
+  private canvas: HTMLCanvasElement;
+  private camera: THREE.OrthographicCamera;
+
+  constructor(canvas: HTMLCanvasElement, camera: THREE.OrthographicCamera) {
+    this.canvas = canvas;
+    this.camera = camera;
+  }
+
+  drop(tileX: number, tileY: number) {
+    const el = document.createElement('div');
+    el.textContent = '🛶';
+    el.style.cssText = `
+      position: fixed;
+      font-size: 22px;
+      line-height: 1;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 599;
+      user-select: none;
+    `;
+    document.body.appendChild(el);
+    this.items.push({ tileX, tileY, el });
+  }
+
+  // Returns true if a canoe was at this tile and is now picked up.
+  tryPickup(tileX: number, tileY: number): boolean {
+    const idx = this.items.findIndex(c => c.tileX === tileX && c.tileY === tileY);
+    if (idx < 0) return false;
+    this.items[idx].el.remove();
+    this.items.splice(idx, 1);
+    return true;
+  }
+
+  getSaveData(): { tileX: number; tileY: number }[] {
+    return this.items.map(({ tileX, tileY }) => ({ tileX, tileY }));
+  }
+
+  update() {
+    const cr = getContentRect(this.canvas);
+    for (const item of this.items) {
+      const worldX = (item.tileX + 0.5) * TILE_SIZE;
+      const worldY = -(item.tileY + 0.5) * TILE_SIZE;
+      const sx = cr.x + (0.5 + (worldX - this.camera.position.x) / CANVAS_WIDTH)  * cr.w;
+      const sy = cr.y + (0.5 - (worldY - this.camera.position.y) / CANVAS_HEIGHT) * cr.h;
+      const onScreen = sx >= cr.x && sx <= cr.x + cr.w && sy >= cr.y && sy <= cr.y + cr.h;
+      item.el.style.display = onScreen ? 'block' : 'none';
+      item.el.style.left = `${sx}px`;
+      item.el.style.top  = `${sy}px`;
+    }
+  }
+}
+
 export class StructureManager {
   private slots: (PlacedStructure | null)[] = [];
   private canvas: HTMLCanvasElement;
@@ -137,6 +191,24 @@ export class StructureManager {
     } else {
       s.tooltipEl.textContent = `${STRUCTURE_CONFIGS[s.type].label}\nComplete`;
     }
+  }
+
+  getSaveData(): { tileX: number; tileY: number; type: StructureType; progressDays: number; complete: boolean }[] {
+    return this.slots
+      .filter((s): s is PlacedStructure => s !== null && !(s.type === 'canoe' && s.complete))
+      .map(s => ({ tileX: s.tileX, tileY: s.tileY, type: s.type, progressDays: s.progressDays, complete: s.complete }));
+  }
+
+  restore(tileX: number, tileY: number, type: StructureType, progressDays: number, complete: boolean): number {
+    const idx = this.add(tileX, tileY, type);
+    if (complete) {
+      const s = this.slots[idx]!;
+      s.complete = true;
+      s.tooltipEl.textContent = `${STRUCTURE_CONFIGS[type].label}\nComplete`;
+    } else {
+      this.setProgress(idx, progressDays);
+    }
+    return idx;
   }
 
   update() {

@@ -1,5 +1,5 @@
 import type { PlayerStats } from './playerStats';
-import { FOOD_CAPACITY_LBS, WATER_CAPACITY_GAL, getMoraleLabel } from './playerStats';
+import { getMoraleLabel } from './playerStats';
 import { CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
 
 function formatTime(daysFractional: number): string {
@@ -10,13 +10,34 @@ function formatTime(daysFractional: number): string {
   return `Day ${day}, ${h12}${ampm}`;
 }
 
-const STAT_BARS = [
-  { key: 'health'  as const, label: 'Health',  color: '#c94040', max: 100,                bar: true,  unit: ''    },
-  { key: 'food'    as const, label: 'Food',     color: '#b87428', max: FOOD_CAPACITY_LBS,  bar: false, unit: 'lbs' },
-  { key: 'water'   as const, label: 'Water',    color: '#3a8fc4', max: WATER_CAPACITY_GAL, bar: false, unit: 'gal' },
-  { key: 'morale'  as const, label: 'Morale',   color: '#5a7fb8', max: 100,                bar: false, unit: ''    },
-  { key: 'energy'  as const, label: 'Energy',   color: '#8a6fbf', max: 100,                bar: true,  unit: ''    },
-];
+function makeBarRow(label: string, color: string) {
+  const row = document.createElement('div');
+  row.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+  const lbl = document.createElement('span');
+  lbl.textContent = label;
+  lbl.style.cssText = 'color: #666; font: 11px monospace; width: 44px; text-align: left; flex-shrink: 0;';
+  const track = document.createElement('div');
+  track.style.cssText = 'width: 110px; height: 5px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; flex-shrink: 0;';
+  const fill = document.createElement('div');
+  fill.style.cssText = `height: 100%; width: 100%; background: ${color}; border-radius: 3px; transition: width 0.25s ease;`;
+  track.appendChild(fill);
+  const val = document.createElement('span');
+  val.style.cssText = 'color: #888; font: 11px monospace; width: 26px; flex-shrink: 0;';
+  row.append(lbl, track, val);
+  return { row, fill, val };
+}
+
+function makeTextRow(label: string) {
+  const row = document.createElement('div');
+  row.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+  const lbl = document.createElement('span');
+  lbl.textContent = label;
+  lbl.style.cssText = 'color: #666; font: 11px monospace; width: 44px; text-align: left; flex-shrink: 0;';
+  const val = document.createElement('span');
+  val.style.cssText = 'color: #999; font: 11px monospace;';
+  row.append(lbl, val);
+  return { row, val };
+}
 
 // Returns the height of the top/bottom letterbox bands in CSS pixels.
 // Falls back to a small overlay height if the screen is pillarboxed instead.
@@ -29,7 +50,7 @@ function getBandHeight(): number {
   return 44; // pillarboxed fallback: thin overlay on the game edges
 }
 
-export function createHud(seed?: string, onStopAction?: () => void): (stats: PlayerStats, timeTicking: boolean) => void {
+export function createHud(seed?: string, onStopAction?: () => void): (stats: PlayerStats, timeTicking: boolean, portaging?: boolean) => void {
   // ── Top bar ────────────────────────────────────────────────────────────
   const topBar = document.createElement('div');
   topBar.style.cssText = `
@@ -112,41 +133,43 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
   const bottomBar = document.createElement('div');
   bottomBar.style.cssText = `
     position: fixed; bottom: 0; left: 0; right: 0;
-    display: flex; align-items: center; justify-content: center; gap: 28px;
-    padding: 0 32px;
+    display: flex; align-items: center;
+    padding: 0 28px;
     pointer-events: none; z-index: 1000; box-sizing: border-box;
   `;
   document.body.appendChild(bottomBar);
 
-  const statWidgets = STAT_BARS.map(cfg => {
-    const wrap = document.createElement('div');
-    wrap.style.cssText = 'display: flex; align-items: center; gap: 8px; flex: 1; max-width: 260px;';
+  // Left group: Health / Energy bars + Morale text
+  const vitalsGroup = document.createElement('div');
+  vitalsGroup.style.cssText = 'display: flex; flex-direction: column; justify-content: center; gap: 5px;';
+  const healthRow = makeBarRow('Health', '#c94040');
+  const energyRow = makeBarRow('Energy', '#8a6fbf');
+  const moraleRow = makeTextRow('Morale');
+  vitalsGroup.append(healthRow.row, energyRow.row, moraleRow.row);
 
-    const label = document.createElement('span');
-    label.textContent   = cfg.label;
-    label.style.cssText = 'color: #888; font: 12px monospace; width: 44px; text-align: right; flex-shrink: 0;';
+  // Middle group: Food + Water
+  const provisionsGroup = document.createElement('div');
+  provisionsGroup.style.cssText = 'display: flex; flex-direction: column; justify-content: center; gap: 5px; margin-left: 28px;';
+  const foodRow  = makeTextRow('Food');
+  const waterRow = makeTextRow('Water');
+  provisionsGroup.append(foodRow.row, waterRow.row);
 
-    let fill: HTMLDivElement | null = null;
+  // Right: canoe indicator
+  const canoeIndicator = document.createElement('div');
+  canoeIndicator.style.cssText = `
+    display: none;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+    flex-shrink: 0;
+    font-size: 30px;
+    line-height: 1;
+    color: #ccc;
+  `;
+  canoeIndicator.innerHTML = '🛶<span style="font: 13px monospace; color: #aaa;"></span>';
+  const canoeCount = canoeIndicator.querySelector('span') as HTMLSpanElement;
 
-    if (cfg.bar) {
-      const track = document.createElement('div');
-      track.style.cssText = 'flex: 1; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;';
-      fill = document.createElement('div');
-      fill.style.cssText = `height: 100%; width: 100%; background: ${cfg.color}; border-radius: 3px; transition: width 0.25s ease;`;
-      track.appendChild(fill);
-      wrap.appendChild(track);
-    }
-
-    const val = document.createElement('span');
-    val.style.cssText = cfg.bar
-      ? 'color: #aaa; font: 12px monospace; width: 36px; flex-shrink: 0;'
-      : 'color: #aaa; font: 12px monospace; flex-shrink: 0;';
-
-    wrap.prepend(label);
-    wrap.append(val);
-    bottomBar.appendChild(wrap);
-    return { fill, val, key: cfg.key, max: cfg.max, bar: cfg.bar, unit: cfg.unit };
-  });
+  bottomBar.append(vitalsGroup, provisionsGroup, canoeIndicator);
 
   // ── Layout: set bar heights to match letterbox bands ───────────────────
   function layout() {
@@ -158,7 +181,7 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
   window.addEventListener('resize', layout);
 
   // ── Update (called every frame) ────────────────────────────────────────
-  return function updateHud(stats: PlayerStats, timeTicking: boolean) {
+  return function updateHud(stats: PlayerStats, timeTicking: boolean, portaging = false) {
     clockEl.style.opacity = timeTicking ? '1' : '0';
     dayEl.textContent     = formatTime(stats.daysTraveled);
     milesEl.textContent   = `· ${stats.milesTraveled.toFixed(1)} mi`;
@@ -174,22 +197,25 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
       const showStop = !isFinite(stats.activeAction.durationDays) || stats.activeAction.id.startsWith('build_');
       stopBtn.style.display = showStop ? 'inline-block' : 'none';
     } else {
-      actionEl.textContent  = '';
+      actionEl.textContent  = portaging ? '· Portaging 🛶' : '';
       stopBtn.style.display = 'none';
     }
 
     conditionsEl.textContent = stats.statusConditions.map(c => `! ${c.label}`).join('  ');
 
-    for (const w of statWidgets) {
-      const v = Math.max(0, stats[w.key] as number);
-      if (w.fill) w.fill.style.width = `${(v / w.max) * 100}%`;
-      if (w.key === 'morale') {
-        w.val.textContent = `${getMoraleLabel(v)} (${Math.round(v)})`;
-      } else if (w.bar) {
-        w.val.textContent = String(Math.round(v));
-      } else {
-        w.val.textContent = `${v.toFixed(1)} ${w.unit}`;
-      }
+    healthRow.fill.style.width = `${stats.health}%`;
+    healthRow.val.textContent  = String(Math.round(stats.health));
+    energyRow.fill.style.width = `${stats.energy}%`;
+    energyRow.val.textContent  = String(Math.round(stats.energy));
+    moraleRow.val.textContent  = getMoraleLabel(stats.morale);
+    foodRow.val.textContent    = `${stats.food.toFixed(1)} lbs`;
+    waterRow.val.textContent   = `${stats.water.toFixed(1)} gal`;
+
+    if (stats.canoes > 0) {
+      canoeIndicator.style.display = 'flex';
+      canoeCount.textContent = stats.canoes > 1 ? ` ×${stats.canoes}` : '';
+    } else {
+      canoeIndicator.style.display = 'none';
     }
   };
 }

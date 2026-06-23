@@ -78,6 +78,17 @@ export class Player {
     this.syncMesh();
   }
 
+  teleport(tileX: number, tileY: number) {
+    this.tileX    = tileX;
+    this.tileY    = tileY;
+    this.targetX  = tileX;
+    this.targetY  = tileY;
+    this.visualX  = tileX + 0.5;
+    this.visualY  = tileY + 0.5;
+    this.progress = 1.0;
+    this.syncMesh();
+  }
+
   private syncMesh() {
     this.mesh.position.set(
        this.visualX * TILE_SIZE,

@@ -20,7 +20,6 @@ export interface PlayerStats {
   health: number; // 0–100
   food: number; // lbs
   water: number; // lbs
-  timber: number; // units
   minerals: number; // units
   canoes: number; // completed canoes in inventory
   morale: number; // 0–100 (displayed as adjective)
@@ -36,7 +35,6 @@ export const SECONDS_PER_DAY    = 60;
 export const MILES_PER_TILE     = 0.1;
 export const FOOD_CAPACITY_LBS  = 30;
 export const WATER_CAPACITY_GAL = 10;
-export const TIMBER_CAPACITY    = 50;
 export const MINERALS_CAPACITY  = 50;
 
 export const SUNRISE = 6  / 24; // 6 AM as a day fraction
@@ -61,7 +59,7 @@ const FORAGE_GAME_FACTOR    = 0.50;
 const HARVEST_TIMBER_FACTOR   = 0.80;
 const HARVEST_MINERALS_FACTOR = 0.60;
 
-export type ForageEvent = { emoji: string };
+export type ForageEvent = { emoji: string; timber?: number };
 
 const REST_FOOD_DRAIN_PER_DAY = 6; // lbs/day
 const REST_WATER_DRAIN_PER_DAY = 4; // lbs/day
@@ -102,7 +100,6 @@ export function createStats(): PlayerStats {
     health: 100,
     food: 20,
     water: 6,
-    timber: 0,
     minerals: 0,
     canoes: 1,
     morale: 100,
@@ -246,13 +243,6 @@ export function updateStats(
         if (!isDaylight(stats.daysTraveled)) {
           stats.activeAction = null;
         } else {
-          if (stats.activeAction.timberPerHour) {
-            const hoursBefore = Math.floor((stats.activeAction.progressDays - gameDays) * 24);
-            const hoursNow    = Math.floor(stats.activeAction.progressDays * 24);
-            if (hoursNow > hoursBefore) {
-              stats.timber = Math.max(0, stats.timber - stats.activeAction.timberPerHour);
-            }
-          }
           if (stats.activeAction.progressDays >= stats.activeAction.durationDays) {
             stats.activeAction = null; // completion side-effect handled by caller via prevAction
           }
@@ -264,9 +254,9 @@ export function updateStats(
           const hoursBefore = Math.floor((stats.activeAction.progressDays - gameDays) * 24);
           const hoursNow    = Math.floor(stats.activeAction.progressDays * 24);
           if (hoursNow > hoursBefore) {
-            if (stats.activeAction.id === 'harvest_timber' && stats.timber < TIMBER_CAPACITY) {
-              stats.timber = Math.min(TIMBER_CAPACITY, stats.timber + Math.random() * biome.baseResources.timber * HARVEST_TIMBER_FACTOR);
-              forageEvents.push({ emoji: '🪵' });
+            if (stats.activeAction.id === 'harvest_timber') {
+              const gained = Math.random() * biome.baseResources.timber * HARVEST_TIMBER_FACTOR;
+              forageEvents.push({ emoji: '🪵', timber: gained });
             } else if (stats.activeAction.id === 'harvest_minerals' && stats.minerals < MINERALS_CAPACITY) {
               stats.minerals = Math.min(MINERALS_CAPACITY, stats.minerals + Math.random() * biome.baseResources.minerals * HARVEST_MINERALS_FACTOR);
               forageEvents.push({ emoji: '🪨' });

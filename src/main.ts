@@ -6,8 +6,9 @@ import { createInputHandler } from './input';
 import { createTileInspector } from './tileInspector';
 import { createStats, updateStats, getWeightMultiplier, isDaylight } from './playerStats';
 import { createHud } from './hud';
-import { createInventory } from './inventory';
-import { StructureManager, CANOE_TIMBER_COST, SHELTER_TIMBER_COST, STRUCTURE_CONFIGS } from './structures';
+import { StructureManager, DroppedCanoeManager, CANOE_TIMBER_COST, SHELTER_TIMBER_COST, STRUCTURE_CONFIGS } from './structures';
+import { TimberPileManager } from './timberPiles';
+import { saveGame, loadGame, deleteSave } from './save';
 import { createRadialMenu } from './radialMenu';
 import { sampleElevation, sampleMoisture, sampleRiver, sampleLake } from './noise';
 import { getBiome, BIOMES } from './biomes';
@@ -90,6 +91,14 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
       ],
     },
     {
+      label: 'Drop Canoe',
+      disabled: stats.canoes === 0,
+      action: () => {
+        stats.canoes--;
+        droppedCanoes.drop(Math.floor(player.tileX), Math.floor(player.tileY));
+      },
+    },
+    {
       label: 'Build',
       disabled: !daylight,
       children: (() => {
@@ -97,10 +106,11 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
         const tileY = Math.floor(player.tileY);
         const existingCanoe   = structures.findUnfinished(tileX, tileY, 'canoe');
         const existingShelter = structures.findUnfinished(tileX, tileY, 'shelter');
+        const adjacentTimber = timberPiles.getAdjacentAmount(tileX, tileY);
         return [
           {
             label: existingCanoe >= 0 ? 'Resume Canoe' : `Canoe (${CANOE_TIMBER_COST}🪵)`,
-            disabled: existingCanoe < 0 && stats.timber < CANOE_TIMBER_COST,
+            disabled: existingCanoe < 0 && adjacentTimber < CANOE_TIMBER_COST,
             action: () => {
               const cfg = STRUCTURE_CONFIGS.canoe;
               const timberPerHour = cfg.timberCost / cfg.totalHours;
@@ -114,7 +124,7 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
           },
           {
             label: existingShelter >= 0 ? 'Resume Shelter' : `Shelter (${SHELTER_TIMBER_COST}🪵)`,
-            disabled: existingShelter < 0 && stats.timber < SHELTER_TIMBER_COST,
+            disabled: existingShelter < 0 && adjacentTimber < SHELTER_TIMBER_COST,
             action: () => {
               const cfg = STRUCTURE_CONFIGS.shelter;
               const timberPerHour = cfg.timberCost / cfg.totalHours;
@@ -166,10 +176,34 @@ function updateNightOverlay(daysFractional: number) {
 }
 
 // --- Stats & HUD ---
-const stats     = createStats();
-const updateHud = createHud(currentSeed, () => { stats.activeAction = null; });
-const inventory = createInventory();
-const structures = new StructureManager(renderer.domElement, camera);
+const stats      = createStats();
+const updateHud  = createHud(currentSeed, () => { stats.activeAction = null; });
+const structures    = new StructureManager(renderer.domElement, camera);
+const droppedCanoes = new DroppedCanoeManager(renderer.domElement, camera);
+const timberPiles   = new TimberPileManager(renderer.domElement, camera);
+
+// --- Persistence ---
+function doSave() {
+  saveGame(
+    currentSeed, stats,
+    Math.floor(player.tileX), Math.floor(player.tileY),
+    structures.getSaveData(),
+    droppedCanoes.getSaveData(),
+    timberPiles.getSaveData(),
+  );
+}
+
+const save = loadGame(currentSeed);
+if (save) {
+  Object.assign(stats, save.stats);
+  player.teleport(save.playerTileX, save.playerTileY);
+  for (const s of save.structures)    structures.restore(s.tileX, s.tileY, s.type, s.progressDays, s.complete);
+  for (const c of save.droppedCanoes) droppedCanoes.drop(c.tileX, c.tileY);
+  for (const p of save.timberPiles)   timberPiles.restorePile(p.tileX, p.tileY, p.amount);
+}
+
+window.addEventListener('beforeunload', doSave);
+setInterval(doSave, 60_000);
 
 // --- Water movement constraint ---
 function isWaterBiome(tx: number, ty: number): boolean {
@@ -288,7 +322,7 @@ function showGameOver() {
   `;
   btn.addEventListener('mouseenter', () => { btn.style.background = 'rgba(70,70,70,0.95)'; btn.style.color = '#fff'; });
   btn.addEventListener('mouseleave', () => { btn.style.background = 'rgba(40,40,40,0.9)';  btn.style.color = '#d0d0d0'; });
-  btn.addEventListener('click', () => window.location.reload());
+  btn.addEventListener('click', () => { deleteSave(currentSeed); window.location.reload(); });
 
   box.append(title, sub, btn);
   overlay.appendChild(box);
@@ -310,9 +344,15 @@ function tick() {
   const ty = Math.floor(player.tileY);
   const currentBiome = getBiome(sampleElevation(tx, ty, elevation), sampleMoisture(tx, ty, moisture), sampleRiver(tx, ty, river), sampleLake(tx, ty, river));
   const biomeProps   = BIOMES[currentBiome];
-  const inWater      = currentBiome === 'deep_water' || currentBiome === 'shallow_water';
-  const usingCanoe   = inWater && stats.canoes > 0;
-  const effectiveSpeed = (usingCanoe ? 1.5 : biomeProps.speedMultiplier) * getWeightMultiplier(stats);
+  const inWater       = currentBiome === 'deep_water' || currentBiome === 'shallow_water';
+  const usingCanoe    = inWater && stats.canoes > 0;
+  const carryingCanoe = !inWater && stats.canoes > 0;
+  const effectiveSpeed = (usingCanoe ? 1.5 : biomeProps.speedMultiplier * (carryingCanoe ? 0.45 : 1)) * getWeightMultiplier(stats);
+
+  // Canoeing is easy; portaging is exhausting
+  const effectiveBiome = usingCanoe    ? { ...biomeProps, energyDrainPerTile: 0.10 }
+                       : carryingCanoe ? { ...biomeProps, energyDrainPerTile: biomeProps.energyDrainPerTile * 2.2 }
+                       : biomeProps;
 
   const prevX = player.visualX;
   const prevY = player.visualY;
@@ -335,6 +375,9 @@ function tick() {
   playerMoving = tilesMoved > 1e-4;
   if (playerMoving) radialMenu.closeAll();
 
+  // Auto-pickup: collect a dropped canoe when walking onto its tile
+  if (droppedCanoes.tryPickup(tx, ty)) stats.canoes++;
+
   // Stop build if player left the structure's tile (must run before prevAction is captured)
   if (stats.activeAction?.id.startsWith('build_') && stats.activeAction.structureIndex !== undefined) {
     const tile = structures.getTile(stats.activeAction.structureIndex);
@@ -344,8 +387,25 @@ function tick() {
   }
 
   const prevAction = stats.activeAction;
-  const { timeTicking, forageEvents } = updateStats(stats, delta, tilesMoved, biomeProps);
-  for (const ev of forageEvents) showForageEmoji(ev.emoji);
+  const buildProgressBefore = prevAction?.id.startsWith('build_') ? prevAction.progressDays : -1;
+
+  const { timeTicking, forageEvents } = updateStats(stats, delta, tilesMoved, effectiveBiome);
+
+  for (const ev of forageEvents) {
+    showForageEmoji(ev.emoji);
+    if (ev.timber) timberPiles.addAmount(tx, ty, ev.timber, isWaterBiome);
+  }
+
+  // Deduct timber from adjacent piles once per build hour crossed
+  if (prevAction?.id.startsWith('build_') && prevAction.timberPerHour !== undefined && prevAction.structureIndex !== undefined) {
+    const buildProgressAfter = prevAction.progressDays; // mutated in-place by updateStats
+    const hoursBefore = Math.floor(buildProgressBefore * 24);
+    const hoursNow    = Math.floor(buildProgressAfter  * 24);
+    if (hoursNow > hoursBefore) {
+      const tile = structures.getTile(prevAction.structureIndex);
+      if (tile) timberPiles.consumeFromAdjacent(tile.tileX, tile.tileY, prevAction.timberPerHour);
+    }
+  }
 
   // Sync build progress; detect completion (updateStats nulls the action on finish)
   if (prevAction?.id.startsWith('build_') && prevAction.structureIndex !== undefined) {
@@ -356,11 +416,12 @@ function tick() {
     }
   }
   if (stats.health <= 0) { showGameOver(); return; }
-  updateHud(stats, timeTicking);
-  inventory.update(stats);
+  updateHud(stats, timeTicking, carryingCanoe);
   updateNightOverlay(stats.daysTraveled);
   tileInspector.update();
   structures.update();
+  droppedCanoes.update();
+  timberPiles.update();
 
   chunkManager.update(player.visualX, player.visualY);
 
