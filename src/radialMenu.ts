@@ -6,6 +6,7 @@ export interface RadialItem {
   label: string;
   action?: () => void;
   children?: RadialItem[];
+  disabled?: boolean;
 }
 
 const RADIUS  = 110;
@@ -150,6 +151,8 @@ export function createRadialMenu(
       const item  = items[i];
       const hasChildren = !!item.children?.length;
 
+      const isDisabled = !!item.disabled;
+
       const btn = document.createElement('div');
       btn.innerHTML = `<span style="opacity:0.45;font-size:10px;margin-right:5px">${i + 1}</span>${item.label}${hasChildren ? ' ›' : ''}`;
       btn.style.cssText = `
@@ -162,30 +165,33 @@ export function createRadialMenu(
         align-items: center;
         justify-content: center;
         background: rgba(20,20,20,0.88);
-        color: #d0d0d0;
+        color: ${isDisabled ? '#555' : '#d0d0d0'};
         font: 12px/1.3 monospace;
-        border: 1px solid ${defaultBorderColor(hasChildren)};
+        border: 1px solid ${isDisabled ? 'rgba(255,255,255,0.07)' : defaultBorderColor(hasChildren)};
         border-radius: 6px;
         text-align: center;
-        pointer-events: auto;
-        cursor: pointer;
+        pointer-events: ${isDisabled ? 'none' : 'auto'};
+        cursor: ${isDisabled ? 'default' : 'pointer'};
         user-select: none;
         white-space: pre-line;
         opacity: 0;
         transform: translate(${spawnX - bx}px, ${spawnY - by}px);
       `;
 
-      btn.addEventListener('mouseenter', () => {
-        btn.style.background  = 'rgba(70,70,70,0.95)';
-        btn.style.borderColor = 'rgba(255,255,255,0.65)';
-        btn.style.color       = '#ffffff';
-      });
-      btn.addEventListener('mouseleave', () => {
-        if (level.expandedChild === i) applySelected(btn);
-        else applyDefault(btn, hasChildren);
-      });
+      if (!isDisabled) {
+        btn.addEventListener('mouseenter', () => {
+          btn.style.background  = 'rgba(70,70,70,0.95)';
+          btn.style.borderColor = 'rgba(255,255,255,0.65)';
+          btn.style.color       = '#ffffff';
+        });
+        btn.addEventListener('mouseleave', () => {
+          if (level.expandedChild === i) applySelected(btn);
+          else applyDefault(btn, hasChildren);
+        });
+      }
 
       btn.addEventListener('click', (e) => {
+        if (isDisabled) return;
         e.stopPropagation();
 
         if (hasChildren) {

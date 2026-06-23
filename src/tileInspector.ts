@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { type NoiseFunction2D } from 'simplex-noise';
 import { TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
-import { sampleElevation, sampleMoisture } from './noise';
+import { sampleElevation, sampleMoisture, sampleRiver, sampleLake } from './noise';
 import { getBiome, BIOMES, getTileResources } from './biomes';
 import { canvasCoordsToTile } from './coordinates';
 
@@ -9,6 +9,20 @@ const INTENT_DELAY_MS = 300;
 
 function capitalize(s: string) {
   return s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// elev=0.42 → 0 ft (sea level), elev=1.0 → ~14,400 ft
+function formatElevation(elev: number): string {
+  const ft = Math.round((elev - 0.42) * 25000);
+  return `${ft.toLocaleString()} ft`;
+}
+
+function formatMoisture(moist: number): string {
+  if (moist < 0.2) return 'Arid';
+  if (moist < 0.4) return 'Dry';
+  if (moist < 0.6) return 'Moderate';
+  if (moist < 0.8) return 'Humid';
+  return 'Saturated';
 }
 
 function getContentRect(el: HTMLCanvasElement): { x: number; y: number; w: number; h: number } {
@@ -30,6 +44,7 @@ export function createTileInspector(
   camera: THREE.OrthographicCamera,
   elevNoise: NoiseFunction2D,
   moistNoise: NoiseFunction2D,
+  riverNoise: NoiseFunction2D,
   isMenuOpen: () => boolean = () => false,
   isMoving: () => boolean = () => false,
 ): { update: () => void } {
@@ -100,16 +115,18 @@ export function createTileInspector(
     highlight.visible = !isMoving();
 
     // Always update content and position so it's ready when the timer fires.
-    const elev  = sampleElevation(tileX, tileY, elevNoise);
-    const moist = sampleMoisture(tileX, tileY, moistNoise);
-    const biome = getBiome(elev, moist);
+    const elev     = sampleElevation(tileX, tileY, elevNoise);
+    const moist    = sampleMoisture(tileX, tileY, moistNoise);
+    const riverVal = sampleRiver(tileX, tileY, riverNoise);
+    const lakeVal  = sampleLake(tileX, tileY, riverNoise);
+    const biome    = getBiome(elev, moist, riverVal, lakeVal);
     const props = BIOMES[biome];
     const res   = getTileResources(biome);
     tooltip.textContent = [
       capitalize(biome),
       `Tile     (${tileX}, ${tileY})`,
-      `Elev     ${elev.toFixed(2)}`,
-      `Moisture ${moist.toFixed(2)}`,
+      `Elev     ${formatElevation(elev)}`,
+      `Moisture ${formatMoisture(moist)}`,
       `Speed    ×${props.speedMultiplier.toFixed(2)}`,
       ``,
       `Plants   ${res.plants}`,

@@ -4,10 +4,12 @@ import { ChunkManager } from './chunkManager';
 import { Player } from './player';
 import { createInputHandler } from './input';
 import { createTileInspector } from './tileInspector';
-import { createStats, updateStats, getWeightMultiplier } from './playerStats';
+import { createStats, updateStats, getWeightMultiplier, isDaylight } from './playerStats';
 import { createHud } from './hud';
+import { createInventory } from './inventory';
+import { StructureManager, CANOE_TIMBER_COST, SHELTER_TIMBER_COST, STRUCTURE_CONFIGS } from './structures';
 import { createRadialMenu } from './radialMenu';
-import { sampleElevation, sampleMoisture } from './noise';
+import { sampleElevation, sampleMoisture, sampleRiver, sampleLake } from './noise';
 import { getBiome, BIOMES } from './biomes';
 import { SEED, CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
 
@@ -46,47 +48,102 @@ function resolveSeed(): string {
 const currentSeed = resolveSeed();
 
 // --- World ---
-const { elevation, moisture } = createNoiseGenerators(currentSeed);
-const chunkManager = new ChunkManager(scene, elevation, moisture);
+const { elevation, moisture, river } = createNoiseGenerators(currentSeed);
+const chunkManager = new ChunkManager(scene, elevation, moisture, river);
 
 // --- Player & input ---
 const player = new Player(scene);
 const input  = createInputHandler();
-const noop = () => {};
-const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY) => [
-  {
-    label: 'Rest',
-    children: [
-      { label: '1 day',  action: () => { stats.activeAction = { id: 'rest', label: 'Resting', durationDays: 1, progressDays: 0 }; } },
-      { label: '3 days', action: () => { stats.activeAction = { id: 'rest', label: 'Resting', durationDays: 3, progressDays: 0 }; } },
-      { label: '1 week', action: () => { stats.activeAction = { id: 'rest', label: 'Resting', durationDays: 7, progressDays: 0 }; } },
-      { label: 'Til dawn', action: () => {
-        const frac = stats.daysTraveled % 1;
-        const morning = 6 / 24;
-        const duration = frac < morning ? morning - frac : (1 + morning) - frac;
-        stats.activeAction = { id: 'rest', label: 'Resting', durationDays: duration, progressDays: 0 };
-      }},
-    ],
-  },
-  { label: 'Forage',   children: [
-    { label: 'Plants', action: noop },
-    { label: 'Water',  action: noop },
-    { label: 'Game',   action: noop },
-  ]},
-  { label: 'Build',    action: noop },
-  { label: 'Inspect',  action: noop },
-  { label: 'Camp',     action: noop },
-]);
+const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY) => {
+  const daylight = isDaylight(stats.daysTraveled);
+  const onWater  = isWaterBiome(Math.floor(player.tileX), Math.floor(player.tileY));
+  return [
+    {
+      label: 'Rest',
+      disabled: onWater,
+      children: [
+        { label: '1 day',  action: () => { stats.activeAction = { id: 'rest', label: 'Resting', durationDays: 1, progressDays: 0 }; } },
+        { label: 'Til dawn', action: () => {
+          const frac = stats.daysTraveled % 1;
+          const morning = 6 / 24;
+          const duration = frac < morning ? morning - frac : (1 + morning) - frac;
+          stats.activeAction = { id: 'rest', label: 'Resting', durationDays: duration, progressDays: 0 };
+        }},
+      ],
+    },
+    {
+      label: 'Forage',
+      disabled: !daylight,
+      action: () => { stats.activeAction = { id: 'forage', label: 'Foraging', durationDays: Infinity, progressDays: 0 }; },
+    },
+    {
+      label: 'Hunt',
+      disabled: !daylight,
+      action: () => { stats.activeAction = { id: 'hunt', label: 'Hunting', durationDays: Infinity, progressDays: 0 }; },
+    },
+    {
+      label: 'Harvest',
+      disabled: !daylight,
+      children: [
+        { label: 'Timber',   action: () => { stats.activeAction = { id: 'harvest_timber',   label: 'Harvesting timber',   durationDays: Infinity, progressDays: 0 }; } },
+        { label: 'Minerals', action: () => { stats.activeAction = { id: 'harvest_minerals', label: 'Harvesting minerals', durationDays: Infinity, progressDays: 0 }; } },
+      ],
+    },
+    {
+      label: 'Build',
+      disabled: !daylight,
+      children: (() => {
+        const tileX = Math.floor(player.tileX);
+        const tileY = Math.floor(player.tileY);
+        const existingCanoe   = structures.findUnfinished(tileX, tileY, 'canoe');
+        const existingShelter = structures.findUnfinished(tileX, tileY, 'shelter');
+        return [
+          {
+            label: existingCanoe >= 0 ? 'Resume Canoe' : `Canoe (${CANOE_TIMBER_COST}🪵)`,
+            disabled: existingCanoe < 0 && stats.timber < CANOE_TIMBER_COST,
+            action: () => {
+              const cfg = STRUCTURE_CONFIGS.canoe;
+              const timberPerHour = cfg.timberCost / cfg.totalHours;
+              if (existingCanoe >= 0) {
+                stats.activeAction = { id: 'build_canoe', label: 'Building canoe', durationDays: cfg.totalHours / 24, progressDays: structures.getProgressDays(existingCanoe), structureIndex: existingCanoe, timberPerHour };
+              } else {
+                const idx = structures.add(tileX, tileY, 'canoe');
+                stats.activeAction = { id: 'build_canoe', label: 'Building canoe', durationDays: cfg.totalHours / 24, progressDays: 0, structureIndex: idx, timberPerHour };
+              }
+            },
+          },
+          {
+            label: existingShelter >= 0 ? 'Resume Shelter' : `Shelter (${SHELTER_TIMBER_COST}🪵)`,
+            disabled: existingShelter < 0 && stats.timber < SHELTER_TIMBER_COST,
+            action: () => {
+              const cfg = STRUCTURE_CONFIGS.shelter;
+              const timberPerHour = cfg.timberCost / cfg.totalHours;
+              if (existingShelter >= 0) {
+                stats.activeAction = { id: 'build_shelter', label: 'Building shelter', durationDays: cfg.totalHours / 24, progressDays: structures.getProgressDays(existingShelter), structureIndex: existingShelter, timberPerHour };
+              } else {
+                const idx = structures.add(tileX, tileY, 'shelter');
+                stats.activeAction = { id: 'build_shelter', label: 'Building shelter', durationDays: cfg.totalHours / 24, progressDays: 0, structureIndex: idx, timberPerHour };
+              }
+            },
+          },
+        ];
+      })(),
+    },
+  ];
+});
 window.addEventListener('keydown', (e) => {
   if (e.key === ' ') {
     e.preventDefault();
     radialMenu.openAtTile(player.tileX, player.tileY);
   }
+  if (e.key === 'Escape' && stats.activeAction) {
+    stats.activeAction = null;
+  }
 });
 
 let playerMoving = false;
 const tileInspector = createTileInspector(
-  renderer.domElement, scene, camera, elevation, moisture,
+  renderer.domElement, scene, camera, elevation, moisture, river,
   () => radialMenu.isOpen(),
   () => playerMoving,
 );
@@ -110,7 +167,77 @@ function updateNightOverlay(daysFractional: number) {
 
 // --- Stats & HUD ---
 const stats     = createStats();
-const updateHud = createHud(currentSeed);
+const updateHud = createHud(currentSeed, () => { stats.activeAction = null; });
+const inventory = createInventory();
+const structures = new StructureManager(renderer.domElement, camera);
+
+// --- Water movement constraint ---
+function isWaterBiome(tx: number, ty: number): boolean {
+  const b = getBiome(sampleElevation(tx, ty, elevation), sampleMoisture(tx, ty, moisture), sampleRiver(tx, ty, river), sampleLake(tx, ty, river));
+  return b === 'deep_water' || b === 'shallow_water';
+}
+
+function canEnterTile(tx: number, ty: number): boolean {
+  if (!isWaterBiome(tx, ty)) return true;
+  if (stats.canoes > 0) return true; // canoe allows all water travel
+  // Allow wading 1 tile from land (any 8-neighbor is non-water)
+  for (let ddx = -1; ddx <= 1; ddx++) {
+    for (let ddy = -1; ddy <= 1; ddy++) {
+      if (ddx === 0 && ddy === 0) continue;
+      if (!isWaterBiome(tx + ddx, ty + ddy)) return true;
+    }
+  }
+  return false;
+}
+
+// --- Canoe emoji overlay ---
+const canoeEl = document.createElement('div');
+canoeEl.textContent = '🛶';
+canoeEl.style.cssText = `
+  position: fixed;
+  font-size: 26px;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 600;
+  display: none;
+`;
+document.body.appendChild(canoeEl);
+
+// --- Forage emoji animation ---
+function getPlayerScreenPos() {
+  const r  = renderer.domElement.getBoundingClientRect();
+  const ea = r.width / r.height, ca = CANVAS_WIDTH / CANVAS_HEIGHT;
+  let x: number, y: number, w: number, h: number;
+  if (ea > ca) { h = r.height; w = h * ca; x = r.left + (r.width  - w) / 2; y = r.top; }
+  else         { w = r.width;  h = w / ca; x = r.left;                        y = r.top + (r.height - h) / 2; }
+  return { x: x + w / 2, y: y + h / 2 };
+}
+
+function showForageEmoji(emoji: string) {
+  const { x, y } = getPlayerScreenPos();
+  const jitter = (Math.random() - 0.5) * 64;
+  const el = document.createElement('div');
+  el.textContent = emoji;
+  el.style.cssText = `
+    position: fixed;
+    left: ${x + jitter}px;
+    top: ${y}px;
+    font-size: 26px;
+    line-height: 1;
+    transform: translate(-50%, -50%) scale(0.7);
+    opacity: 1;
+    pointer-events: none;
+    z-index: 1500;
+    transition: top 1.8s ease-out, transform 1.8s ease-out, opacity 1.1s 0.7s ease-in;
+  `;
+  document.body.appendChild(el);
+  void el.offsetHeight;
+  el.style.top       = `${y - 96}px`;
+  el.style.transform = 'translate(-50%, -50%) scale(1.5)';
+  el.style.opacity   = '0';
+  setTimeout(() => el.remove(), 1900);
+}
 
 // --- Game over ---
 let gameOver = false;
@@ -181,14 +308,26 @@ function tick() {
 
   const tx = Math.floor(player.tileX);
   const ty = Math.floor(player.tileY);
-  const biomeProps = BIOMES[getBiome(
-    sampleElevation(tx, ty, elevation),
-    sampleMoisture(tx, ty, moisture),
-  )];
+  const currentBiome = getBiome(sampleElevation(tx, ty, elevation), sampleMoisture(tx, ty, moisture), sampleRiver(tx, ty, river), sampleLake(tx, ty, river));
+  const biomeProps   = BIOMES[currentBiome];
+  const inWater      = currentBiome === 'deep_water' || currentBiome === 'shallow_water';
+  const usingCanoe   = inWater && stats.canoes > 0;
+  const effectiveSpeed = (usingCanoe ? 1.5 : biomeProps.speedMultiplier) * getWeightMultiplier(stats);
 
   const prevX = player.visualX;
   const prevY = player.visualY;
-  player.update(input, delta, biomeProps.speedMultiplier * getWeightMultiplier(stats));
+  player.update(input, delta, effectiveSpeed, canEnterTile);
+
+  // Swap player mesh for canoe emoji while paddling
+  player.mesh.visible = !usingCanoe;
+  if (usingCanoe) {
+    const pos = getPlayerScreenPos();
+    canoeEl.style.display = 'block';
+    canoeEl.style.left = `${pos.x}px`;
+    canoeEl.style.top  = `${pos.y}px`;
+  } else {
+    canoeEl.style.display = 'none';
+  }
   const dx = player.visualX - prevX;
   const dy = player.visualY - prevY;
   const tilesMoved = Math.sqrt(dx * dx + dy * dy);
@@ -196,11 +335,32 @@ function tick() {
   playerMoving = tilesMoved > 1e-4;
   if (playerMoving) radialMenu.closeAll();
 
-  const timeTicking = updateStats(stats, delta, tilesMoved, biomeProps);
+  // Stop build if player left the structure's tile (must run before prevAction is captured)
+  if (stats.activeAction?.id.startsWith('build_') && stats.activeAction.structureIndex !== undefined) {
+    const tile = structures.getTile(stats.activeAction.structureIndex);
+    if (tile && (Math.floor(player.tileX) !== tile.tileX || Math.floor(player.tileY) !== tile.tileY)) {
+      stats.activeAction = null;
+    }
+  }
+
+  const prevAction = stats.activeAction;
+  const { timeTicking, forageEvents } = updateStats(stats, delta, tilesMoved, biomeProps);
+  for (const ev of forageEvents) showForageEmoji(ev.emoji);
+
+  // Sync build progress; detect completion (updateStats nulls the action on finish)
+  if (prevAction?.id.startsWith('build_') && prevAction.structureIndex !== undefined) {
+    if (stats.activeAction) {
+      structures.setProgress(prevAction.structureIndex, stats.activeAction.progressDays);
+    } else {
+      structures.complete(prevAction.structureIndex, stats);
+    }
+  }
   if (stats.health <= 0) { showGameOver(); return; }
   updateHud(stats, timeTicking);
+  inventory.update(stats);
   updateNightOverlay(stats.daysTraveled);
   tileInspector.update();
+  structures.update();
 
   chunkManager.update(player.visualX, player.visualY);
 

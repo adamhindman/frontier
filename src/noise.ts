@@ -21,7 +21,8 @@ function hashString(str: string): number {
 export function createNoiseGenerators(seed: string) {
   const elevation = createNoise2D(mulberry32(hashString(seed + '_e')));
   const moisture  = createNoise2D(mulberry32(hashString(seed + '_m')));
-  return { elevation, moisture };
+  const river     = createNoise2D(mulberry32(hashString(seed + '_r')));
+  return { elevation, moisture, river };
 }
 
 // Returns a value in [0, 1] using layered octaves for realistic large-scale terrain.
@@ -39,5 +40,19 @@ export function sampleMoisture(wx: number, wy: number, noise: NoiseFunction2D): 
   v += noise(wx / 700, wy / 700) * 0.6;
   v += noise(wx / 200, wy / 200) * 0.3;
   v += noise(wx / 60,  wy / 60)  * 0.1;
+  return (v + 1) / 2;
+}
+
+// Domain-warped ridged noise: 0 = river channel center, higher = farther from channel.
+export function sampleRiver(wx: number, wy: number, noise: NoiseFunction2D): number {
+  const warpX = noise(wx / 250 + 3.7, wy / 250 + 1.3) * 120;
+  const warpY = noise(wx / 250 + 8.1, wy / 250 + 5.4) * 120;
+  return Math.abs(noise((wx + warpX) / 300, (wy + warpY) / 300));
+}
+
+// Low-frequency blob noise: high values = lake basin.
+export function sampleLake(wx: number, wy: number, noise: NoiseFunction2D): number {
+  const v = noise(wx / 600 + 20, wy / 600 + 20) * 0.6
+          + noise(wx / 180 + 20, wy / 180 + 20) * 0.4;
   return (v + 1) / 2;
 }

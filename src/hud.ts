@@ -1,5 +1,5 @@
 import type { PlayerStats } from './playerStats';
-import { FOOD_CAPACITY_LBS, WATER_CAPACITY_LBS, getMoraleLabel } from './playerStats';
+import { FOOD_CAPACITY_LBS, WATER_CAPACITY_GAL, getMoraleLabel } from './playerStats';
 import { CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
 
 function formatTime(daysFractional: number): string {
@@ -11,11 +11,11 @@ function formatTime(daysFractional: number): string {
 }
 
 const STAT_BARS = [
-  { key: 'health'  as const, label: 'Health',  color: '#c94040', max: 100, bar: true  },
-  { key: 'food'    as const, label: 'Food',     color: '#b87428', max: FOOD_CAPACITY_LBS,  bar: false },
-  { key: 'water'   as const, label: 'Water',    color: '#3a8fc4', max: WATER_CAPACITY_LBS, bar: false },
-  { key: 'morale'  as const, label: 'Morale',   color: '#5a7fb8', max: 100, bar: false },
-  { key: 'energy'  as const, label: 'Energy',   color: '#8a6fbf', max: 100, bar: true  },
+  { key: 'health'  as const, label: 'Health',  color: '#c94040', max: 100,                bar: true,  unit: ''    },
+  { key: 'food'    as const, label: 'Food',     color: '#b87428', max: FOOD_CAPACITY_LBS,  bar: false, unit: 'lbs' },
+  { key: 'water'   as const, label: 'Water',    color: '#3a8fc4', max: WATER_CAPACITY_GAL, bar: false, unit: 'gal' },
+  { key: 'morale'  as const, label: 'Morale',   color: '#5a7fb8', max: 100,                bar: false, unit: ''    },
+  { key: 'energy'  as const, label: 'Energy',   color: '#8a6fbf', max: 100,                bar: true,  unit: ''    },
 ];
 
 // Returns the height of the top/bottom letterbox bands in CSS pixels.
@@ -29,7 +29,7 @@ function getBandHeight(): number {
   return 44; // pillarboxed fallback: thin overlay on the game edges
 }
 
-export function createHud(seed?: string): (stats: PlayerStats, timeTicking: boolean) => void {
+export function createHud(seed?: string, onStopAction?: () => void): (stats: PlayerStats, timeTicking: boolean) => void {
   // ── Top bar ────────────────────────────────────────────────────────────
   const topBar = document.createElement('div');
   topBar.style.cssText = `
@@ -52,7 +52,25 @@ export function createHud(seed?: string): (stats: PlayerStats, timeTicking: bool
   actionEl.style.color     = '#90b8d0';
   conditionsEl.style.color = '#d08050';
 
-  topBar.append(clockEl, dayEl, milesEl, actionEl, conditionsEl);
+  const stopBtn = document.createElement('button');
+  stopBtn.textContent = '■ Stop';
+  stopBtn.style.cssText = `
+    display: none;
+    background: none;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 4px;
+    color: #c09060;
+    font: 11px monospace;
+    padding: 2px 7px;
+    cursor: pointer;
+    pointer-events: auto;
+    flex-shrink: 0;
+  `;
+  stopBtn.addEventListener('mouseenter', () => { stopBtn.style.color = '#e0b080'; stopBtn.style.borderColor = 'rgba(255,255,255,0.3)'; });
+  stopBtn.addEventListener('mouseleave', () => { stopBtn.style.color = '#c09060'; stopBtn.style.borderColor = 'rgba(255,255,255,0.15)'; });
+  if (onStopAction) stopBtn.addEventListener('click', onStopAction);
+
+  topBar.append(clockEl, dayEl, milesEl, actionEl, stopBtn, conditionsEl);
 
   // ── Seed display (top-right) ───────────────────────────────────────────
   if (seed !== undefined) {
@@ -127,7 +145,7 @@ export function createHud(seed?: string): (stats: PlayerStats, timeTicking: bool
     wrap.prepend(label);
     wrap.append(val);
     bottomBar.appendChild(wrap);
-    return { fill, val, key: cfg.key, max: cfg.max, bar: cfg.bar };
+    return { fill, val, key: cfg.key, max: cfg.max, bar: cfg.bar, unit: cfg.unit };
   });
 
   // ── Layout: set bar heights to match letterbox bands ───────────────────
@@ -146,10 +164,18 @@ export function createHud(seed?: string): (stats: PlayerStats, timeTicking: bool
     milesEl.textContent   = `· ${stats.milesTraveled.toFixed(1)} mi`;
 
     if (stats.activeAction) {
-      const pct = Math.min(stats.activeAction.progressDays / stats.activeAction.durationDays, 1);
-      actionEl.textContent = `· ${stats.activeAction.label} ${Math.round(pct * 100)}%`;
+      if (isFinite(stats.activeAction.durationDays)) {
+        const pct = Math.min(stats.activeAction.progressDays / stats.activeAction.durationDays, 1);
+        actionEl.textContent = `· ${stats.activeAction.label} ${Math.round(pct * 100)}%`;
+      } else {
+        const hours = Math.floor(stats.activeAction.progressDays * 24);
+        actionEl.textContent = `· ${stats.activeAction.label} ${hours}h`;
+      }
+      const showStop = !isFinite(stats.activeAction.durationDays) || stats.activeAction.id.startsWith('build_');
+      stopBtn.style.display = showStop ? 'inline-block' : 'none';
     } else {
-      actionEl.textContent = '';
+      actionEl.textContent  = '';
+      stopBtn.style.display = 'none';
     }
 
     conditionsEl.textContent = stats.statusConditions.map(c => `! ${c.label}`).join('  ');
@@ -162,7 +188,7 @@ export function createHud(seed?: string): (stats: PlayerStats, timeTicking: bool
       } else if (w.bar) {
         w.val.textContent = String(Math.round(v));
       } else {
-        w.val.textContent = `${v.toFixed(1)} lbs`;
+        w.val.textContent = `${v.toFixed(1)} ${w.unit}`;
       }
     }
   };

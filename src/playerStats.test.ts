@@ -1,39 +1,175 @@
 import { describe, it, expect } from 'vitest';
-import { getMoraleLabel, getWeightMultiplier, createStats } from './playerStats';
+import type { BiomeProperties } from './biomes';
+import {
+  getMoraleLabel, getWeightMultiplier, createStats, updateStats,
+  FOOD_CAPACITY_LBS, WATER_CAPACITY_GAL, TIMBER_CAPACITY, MINERALS_CAPACITY,
+  SECONDS_PER_DAY,
+} from './playerStats';
+
+// Minimal biome for use in updateStats tests
+const plainsBiome: BiomeProperties = {
+  color: '#6aaa38', elevMin: 0.42, elevMax: 0.55, speedMultiplier: 1.0,
+  baseResources: { plants: 6, game: 5, water: 3, timber: 2, minerals: 2 },
+  foodDrainPerTile: 0.06, waterDrainPerTile: 0.012, energyDrainPerTile: 0.3,
+};
+
+// Zero-resource biome: passive gather never triggers, safe for floor tests
+const barrenBiome: BiomeProperties = {
+  ...plainsBiome,
+  baseResources: { plants: 0, game: 0, water: 0, timber: 0, minerals: 0 },
+};
+
+// ─── getMoraleLabel ──────────────────────────────────────────────────────────
 
 describe('getMoraleLabel', () => {
-  it('returns Despair for 0', () => expect(getMoraleLabel(0)).toBe('Despair'));
-  it('returns Despair for 20', () => expect(getMoraleLabel(20)).toBe('Despair'));
+  it('returns Despair for 0',   () => expect(getMoraleLabel(0)).toBe('Despair'));
+  it('returns Despair for 20',  () => expect(getMoraleLabel(20)).toBe('Despair'));
   it('returns Dejected for 21', () => expect(getMoraleLabel(21)).toBe('Dejected'));
   it('returns Dejected for 40', () => expect(getMoraleLabel(40)).toBe('Dejected'));
-  it('returns Weary for 41', () => expect(getMoraleLabel(41)).toBe('Weary'));
-  it('returns Weary for 60', () => expect(getMoraleLabel(60)).toBe('Weary'));
+  it('returns Weary for 41',    () => expect(getMoraleLabel(41)).toBe('Weary'));
+  it('returns Weary for 60',    () => expect(getMoraleLabel(60)).toBe('Weary'));
   it('returns Resolute for 61', () => expect(getMoraleLabel(61)).toBe('Resolute'));
   it('returns Resolute for 80', () => expect(getMoraleLabel(80)).toBe('Resolute'));
-  it('returns Elated for 81', () => expect(getMoraleLabel(81)).toBe('Elated'));
-  it('returns Elated for 100', () => expect(getMoraleLabel(100)).toBe('Elated'));
+  it('returns Elated for 81',   () => expect(getMoraleLabel(81)).toBe('Elated'));
+  it('returns Elated for 100',  () => expect(getMoraleLabel(100)).toBe('Elated'));
 });
+
+// ─── getWeightMultiplier ─────────────────────────────────────────────────────
 
 describe('getWeightMultiplier', () => {
   it('is 1.0 when carrying nothing', () => {
     const stats = createStats();
-    stats.food = 0;
-    stats.water = 0;
+    stats.food = 0; stats.water = 0;
     expect(getWeightMultiplier(stats)).toBe(1.0);
   });
 
-  it('decreases as weight increases', () => {
+  it('decreases as food + water weight increases', () => {
     const stats = createStats();
-    stats.food = 20;
-    stats.water = 6;
-    // 26 lbs → 1 - 0.26 = 0.74
+    stats.food = 20; stats.water = 6; // 26 total → 1 - 0.26 = 0.74
     expect(getWeightMultiplier(stats)).toBeCloseTo(0.74);
   });
 
   it('floors at 0.5', () => {
     const stats = createStats();
-    stats.food = 100;
-    stats.water = 100;
+    stats.food = 100; stats.water = 100;
     expect(getWeightMultiplier(stats)).toBe(0.5);
+  });
+
+  it('is unaffected by timber and minerals', () => {
+    const stats = createStats();
+    stats.food = 0; stats.water = 0;
+    stats.timber = TIMBER_CAPACITY; stats.minerals = MINERALS_CAPACITY;
+    expect(getWeightMultiplier(stats)).toBe(1.0);
+  });
+});
+
+// ─── createStats ─────────────────────────────────────────────────────────────
+
+describe('createStats', () => {
+  it('initializes all resource fields', () => {
+    const stats = createStats();
+    expect(stats.timber).toBe(0);
+    expect(stats.minerals).toBe(0);
+    expect(stats.health).toBe(100);
+    expect(stats.energy).toBe(100);
+    expect(stats.morale).toBe(100);
+  });
+
+  it('starts with no active action or status conditions', () => {
+    const stats = createStats();
+    expect(stats.activeAction).toBeNull();
+    expect(stats.statusConditions).toHaveLength(0);
+  });
+
+  it('starts at 9 AM (daysTraveled = 9/24)', () => {
+    const stats = createStats();
+    expect(stats.daysTraveled).toBeCloseTo(9 / 24);
+  });
+});
+
+// ─── updateStats — movement drain ────────────────────────────────────────────
+
+describe('updateStats movement drain', () => {
+  it('drains food and water proportional to tiles moved', () => {
+    const stats = createStats();
+    stats.food = 20; stats.water = 6;
+    // Move 10 tiles, no active action, daytime
+    stats.daysTraveled = 12 / 24; // noon
+    updateStats(stats, 0, 10, plainsBiome);
+    expect(stats.food).toBeCloseTo(20 - 10 * plainsBiome.foodDrainPerTile, 5);
+    expect(stats.water).toBeCloseTo(6 - 10 * plainsBiome.waterDrainPerTile, 5);
+  });
+
+  it('does not drain below zero', () => {
+    const stats = createStats();
+    stats.food = 0; stats.water = 0;
+    stats.daysTraveled = 12 / 24;
+    // Use barrenBiome so passive gather never refills food/water
+    updateStats(stats, 0, 100, barrenBiome);
+    expect(stats.food).toBe(0);
+    expect(stats.water).toBe(0);
+  });
+});
+
+// ─── updateStats — build action timber deduction ─────────────────────────────
+
+describe('updateStats build action', () => {
+  it('deducts timber once per in-game hour crossed', () => {
+    const stats = createStats();
+    stats.timber = 10;
+    stats.daysTraveled = 12 / 24; // noon (daylight)
+    const timberPerHour = 10 / 24;
+    stats.activeAction = {
+      id: 'build_canoe',
+      label: 'Building canoe',
+      durationDays: 1,
+      progressDays: 0,
+      structureIndex: 0,
+      timberPerHour,
+    };
+
+    // Advance exactly 1 in-game hour (1/24 of a day)
+    const oneDayInRealSecs = SECONDS_PER_DAY;
+    const oneHourDelta = oneDayInRealSecs / 24; // real seconds = 1 game hour
+    updateStats(stats, oneHourDelta, 0, plainsBiome);
+
+    expect(stats.timber).toBeCloseTo(10 - timberPerHour, 5);
+  });
+
+  it('nulls the action when progressDays reaches durationDays', () => {
+    const stats = createStats();
+    stats.timber = 10;
+    stats.daysTraveled = 12 / 24;
+    stats.activeAction = {
+      id: 'build_canoe',
+      label: 'Building canoe',
+      durationDays: 1 / 24, // 1 game-hour total
+      progressDays: 0,
+      structureIndex: 0,
+      timberPerHour: 10 / 24,
+    };
+
+    // Advance enough to complete (more than 1/24 of a day)
+    updateStats(stats, SECONDS_PER_DAY / 24 + 0.1, 0, plainsBiome);
+
+    expect(stats.activeAction).toBeNull();
+  });
+
+  it('stops the build action at night', () => {
+    const stats = createStats();
+    stats.timber = 10;
+    stats.daysTraveled = 20 / 24; // 8 PM — just at sunset
+    stats.activeAction = {
+      id: 'build_shelter',
+      label: 'Building shelter',
+      durationDays: 8 / 24,
+      progressDays: 0,
+      structureIndex: 0,
+      timberPerHour: 25 / 8,
+    };
+
+    updateStats(stats, 0.016, 0, plainsBiome); // one frame at sunset
+
+    expect(stats.activeAction).toBeNull();
   });
 });

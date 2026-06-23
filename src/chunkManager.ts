@@ -8,11 +8,13 @@ export class ChunkManager {
   private scene: THREE.Scene;
   private elevNoise: NoiseFunction2D;
   private moistNoise: NoiseFunction2D;
+  private riverNoise: NoiseFunction2D;
 
-  constructor(scene: THREE.Scene, elevNoise: NoiseFunction2D, moistNoise: NoiseFunction2D) {
+  constructor(scene: THREE.Scene, elevNoise: NoiseFunction2D, moistNoise: NoiseFunction2D, riverNoise: NoiseFunction2D) {
     this.scene      = scene;
     this.elevNoise  = elevNoise;
     this.moistNoise = moistNoise;
+    this.riverNoise = riverNoise;
   }
 
   update(playerTileX: number, playerTileY: number) {
@@ -23,7 +25,7 @@ export class ChunkManager {
       for (let dx = -ACTIVE_RADIUS; dx <= ACTIVE_RADIUS; dx++) {
         const key = `${pcx + dx},${pcy + dy}`;
         if (!this.chunks.has(key)) {
-          this.chunks.set(key, new Chunk(pcx + dx, pcy + dy, this.elevNoise, this.moistNoise, this.scene));
+          this.chunks.set(key, new Chunk(pcx + dx, pcy + dy, this.elevNoise, this.moistNoise, this.riverNoise, this.scene));
         }
       }
     }

@@ -28,7 +28,7 @@ export class Player {
     this.syncMesh();
   }
 
-  update(input: InputState, delta: number, speedMultiplier = 1.0) {
+  update(input: InputState, delta: number, speedMultiplier = 1.0, canEnter?: (tx: number, ty: number) => boolean) {
     if (this.progress >= 1.0) {
       // Snap logical position to completed step
       this.tileX = this.targetX;
@@ -39,9 +39,28 @@ export class Player {
       const dy = (input.down  ? 1 : 0) - (input.up   ? 1 : 0);
 
       if (dx !== 0 || dy !== 0) {
-        this.targetX  = this.tileX + dx;
-        this.targetY  = this.tileY + dy;
-        this.stepDist = Math.sqrt(dx * dx + dy * dy);
+        let nx = this.tileX + dx;
+        let ny = this.tileY + dy;
+        let nd = Math.sqrt(dx * dx + dy * dy);
+
+        if (canEnter && !canEnter(nx, ny)) {
+          // Diagonal blocked — try sliding along each axis individually
+          if (dx !== 0 && dy !== 0) {
+            if (canEnter(this.tileX + dx, this.tileY)) {
+              nx = this.tileX + dx; ny = this.tileY; nd = 1;
+            } else if (canEnter(this.tileX, this.tileY + dy)) {
+              nx = this.tileX; ny = this.tileY + dy; nd = 1;
+            } else {
+              return;
+            }
+          } else {
+            return;
+          }
+        }
+
+        this.targetX  = nx;
+        this.targetY  = ny;
+        this.stepDist = nd;
         this.progress = 0.0;
       }
     }
