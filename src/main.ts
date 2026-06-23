@@ -6,13 +6,13 @@ import { createInputHandler } from './input';
 import { createTileInspector } from './tileInspector';
 import { createStats, updateStats, getWeightMultiplier, isDaylight, MILES_PER_TILE } from './playerStats';
 import { createHud } from './hud';
-import { StructureManager, DroppedCanoeManager, CANOE_TIMBER_COST, SHELTER_TIMBER_COST, STRUCTURE_CONFIGS } from './structures';
+import { StructureManager, DroppedCanoeManager, CANOE_TIMBER_COST, SHELTER_TIMBER_COST, CAMPFIRE_TIMBER_COST, STRUCTURE_CONFIGS } from './structures';
 import { TimberPileManager } from './timberPiles';
 import { saveGame, loadGame, deleteSave } from './save';
 import { createRadialMenu } from './radialMenu';
 import { sampleElevation, sampleMoisture, sampleRiver, sampleLake } from './noise';
 import { getBiome, BIOMES, BiomeProperties } from './biomes';
-import { SEED, CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
+import { SEED, CANVAS_WIDTH, CANVAS_HEIGHT, TILE_SIZE, CHUNK_WIDTH, CHUNK_HEIGHT, SURVEY_CHUNK_RADIUS, SURVEY_PAN_SPEED } from './constants';
 
 // --- Scene ---
 const scene = new THREE.Scene();
@@ -60,17 +60,22 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
   const onWater  = isWaterBiome(Math.floor(player.tileX), Math.floor(player.tileY));
   return [
     {
-      label: 'Rest',
+      label: 'Rest \'til Dawn',
       disabled: onWater,
-      children: [
-        { label: '1 day',  action: () => { stats.activeAction = { id: 'rest', label: 'Resting', durationDays: 1, progressDays: 0 }; } },
-        { label: 'Til dawn', action: () => {
-          const frac = stats.daysTraveled % 1;
-          const morning = 6 / 24;
-          const duration = frac < morning ? morning - frac : (1 + morning) - frac;
-          stats.activeAction = { id: 'rest', label: 'Resting', durationDays: duration, progressDays: 0 };
-        }},
-      ],
+      action: () => {
+        const frac = stats.daysTraveled % 1;
+        const morning = 6 / 24;
+        const toNextDawn = frac < morning ? morning - frac : (1 + morning) - frac;
+        const duration = toNextDawn < 2 / 24 ? toNextDawn + 1 : toNextDawn;
+        stats.activeAction = { id: 'rest', label: 'Resting', durationDays: duration, progressDays: 0 };
+        const ptx = Math.floor(player.tileX), pty = Math.floor(player.tileY);
+        const fireTile = findAdjacentLandTile(ptx, pty) ?? { tileX: ptx + 1, tileY: pty };
+        const idx = structures.add(fireTile.tileX, fireTile.tileY, 'campfire');
+        structures.complete(idx, stats);
+        const timberNeeded = Math.ceil(duration * 24 / 2);
+        timberPiles.addAmount(fireTile.tileX, fireTile.tileY, timberNeeded, isWaterBiome);
+        stats.bodyTemp = 100;
+      },
     },
     {
       label: 'Forage',
@@ -79,11 +84,15 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
     },
     {
       label: 'Harvest',
-      disabled: !daylight,
       children: [
         { label: 'Timber',   action: () => { stats.activeAction = { id: 'harvest_timber',   label: 'Harvesting timber',   durationDays: Infinity, progressDays: 0 }; } },
-        { label: 'Minerals', action: () => { stats.activeAction = { id: 'harvest_minerals', label: 'Harvesting minerals', durationDays: Infinity, progressDays: 0 }; } },
+        { label: 'Minerals', disabled: !daylight, action: () => { stats.activeAction = { id: 'harvest_minerals', label: 'Harvesting minerals', durationDays: Infinity, progressDays: 0 }; } },
       ],
+    },
+    {
+      label: 'Survey',
+      disabled: !daylight || onWater,
+      action: () => enterSurvey(),
     },
     {
       label: 'Drop Canoe',
@@ -94,18 +103,30 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
       },
     },
     {
+      label: 'Douse Fire',
+      disabled: !structures.hasNearbyFire(Math.floor(player.tileX), Math.floor(player.tileY)),
+      action: () => structures.extinguishNearby(Math.floor(player.tileX), Math.floor(player.tileY)),
+    },
+    {
       label: 'Build',
-      disabled: !daylight,
       children: (() => {
         const tileX = Math.floor(player.tileX);
         const tileY = Math.floor(player.tileY);
-        const existingCanoe   = structures.findUnfinished(tileX, tileY, 'canoe');
-        const existingShelter = structures.findUnfinished(tileX, tileY, 'shelter');
+        const existingCanoe    = structures.findUnfinished(tileX, tileY, 'canoe');
+        const existingShelter  = structures.findUnfinished(tileX, tileY, 'shelter');
+        // Campfire is placed on an adjacent tile — search all four neighbors.
+        const existingCampfire = (() => {
+          for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]] as [number,number][]) {
+            const idx = structures.findUnfinished(tileX+dx, tileY+dy, 'campfire');
+            if (idx >= 0) return idx;
+          }
+          return -1;
+        })();
         const adjacentTimber = timberPiles.getAdjacentAmount(tileX, tileY);
         return [
           {
             label: existingCanoe >= 0 ? 'Resume Canoe' : `Canoe (${CANOE_TIMBER_COST}🪵)`,
-            disabled: existingCanoe < 0 && adjacentTimber < CANOE_TIMBER_COST,
+            disabled: !daylight || (existingCanoe < 0 && adjacentTimber < CANOE_TIMBER_COST),
             action: () => {
               const cfg = STRUCTURE_CONFIGS.canoe;
               const timberPerHour = cfg.timberCost / cfg.totalHours;
@@ -119,7 +140,7 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
           },
           {
             label: existingShelter >= 0 ? 'Resume Shelter' : `Shelter (${SHELTER_TIMBER_COST}🪵)`,
-            disabled: existingShelter < 0 && adjacentTimber < SHELTER_TIMBER_COST,
+            disabled: !daylight || (existingShelter < 0 && adjacentTimber < SHELTER_TIMBER_COST),
             action: () => {
               const cfg = STRUCTURE_CONFIGS.shelter;
               const timberPerHour = cfg.timberCost / cfg.totalHours;
@@ -128,6 +149,23 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
               } else {
                 const idx = structures.add(tileX, tileY, 'shelter');
                 stats.activeAction = { id: 'build_shelter', label: 'Building shelter', durationDays: cfg.totalHours / 24, progressDays: 0, structureIndex: idx, timberPerHour };
+              }
+            },
+          },
+          {
+            label: existingCampfire >= 0 ? 'Resume Campfire' : 'Campfire',
+            disabled: onWater || (existingCampfire < 0 && timberPiles.getAmountWithin(tileX, tileY, 3) < 1),
+            action: () => {
+              const cfg = STRUCTURE_CONFIGS.campfire;
+              const timberPerHour = cfg.timberCost / cfg.totalHours;
+              if (existingCampfire >= 0) {
+                // Resume: player stays on their current tile; structure is already placed.
+                stats.activeAction = { id: 'build_campfire', label: 'Building campfire', durationDays: cfg.totalHours / 24, progressDays: structures.getProgressDays(existingCampfire), structureIndex: existingCampfire, timberPerHour, buildTileX: tileX, buildTileY: tileY };
+              } else {
+                const adjTile = findAdjacentLandTile(tileX, tileY);
+                if (!adjTile) return;
+                const idx = structures.add(adjTile.tileX, adjTile.tileY, 'campfire');
+                stats.activeAction = { id: 'build_campfire', label: 'Building campfire', durationDays: cfg.totalHours / 24, progressDays: 0, structureIndex: idx, timberPerHour, buildTileX: tileX, buildTileY: tileY };
               }
             },
           },
@@ -142,6 +180,7 @@ window.addEventListener('keydown', (e) => {
     radialMenu.openAtTile(player.tileX, player.tileY);
   }
   if (e.key === 'Escape' && stats.activeAction) {
+    if (stats.activeAction.id === 'survey') exitSurvey();
     stats.activeAction = null;
   }
 });
@@ -170,9 +209,47 @@ function updateNightOverlay(daysFractional: number) {
   nightOverlay.style.opacity = (darkness * 0.88).toFixed(3);
 }
 
+// --- Daily distance recap ---
+// Shows miles traveled the previous day at midnight, fades out by 9 AM.
+const dailyRecapEl = document.createElement('div');
+dailyRecapEl.style.cssText = `
+  position: fixed; top: 0; left: 0; right: 0;
+  height: 44px;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none; z-index: 1001;
+  opacity: 0;
+  transition: opacity 1.5s ease;
+`;
+const dailyRecapText = document.createElement('span');
+dailyRecapText.style.cssText = 'color: #c8d8e8; font: 12px monospace; letter-spacing: 0.06em;';
+dailyRecapEl.appendChild(dailyRecapText);
+document.body.appendChild(dailyRecapEl);
+
+let milesAtLastMidnight = 0; // set after load
+let lastKnownDay = -1;       // set after load; -1 means not yet initialized
+let hasRecapData  = false;
+
+function updateDailyRecap(daysTraveled: number) {
+  if (!hasRecapData) { dailyRecapEl.style.opacity = '0'; return; }
+  const t = daysTraveled % 1; // 0 = midnight, fraction of day
+  const FADE_START = 8  / 24;
+  const FADE_END   = 9  / 24;
+  if (t >= FADE_END) {
+    dailyRecapEl.style.opacity = '0';
+  } else if (t >= FADE_START) {
+    dailyRecapEl.style.removeProperty('transition');
+    dailyRecapEl.style.opacity = String(1 - (t - FADE_START) / (FADE_END - FADE_START));
+  } else {
+    dailyRecapEl.style.opacity = '1';
+  }
+}
+
 // --- Stats & HUD ---
 const stats      = createStats();
-const updateHud  = createHud(currentSeed, () => { stats.activeAction = null; });
+const updateHud  = createHud(currentSeed, () => {
+  if (stats.activeAction?.id === 'survey') exitSurvey();
+  stats.activeAction = null;
+});
 const structures    = new StructureManager(renderer.domElement, camera);
 const droppedCanoes = new DroppedCanoeManager(renderer.domElement, camera);
 const timberPiles   = new TimberPileManager(renderer.domElement, camera);
@@ -201,6 +278,25 @@ if (save) {
   for (const s of save.structures    ?? []) structures.restore(s.tileX, s.tileY, s.type, s.progressDays, s.complete);
   for (const c of save.droppedCanoes ?? []) droppedCanoes.drop(c.tileX, c.tileY);
   for (const p of save.timberPiles   ?? []) timberPiles.restorePile(p.tileX, p.tileY, p.amount);
+}
+
+// Initialize daily recap tracking after stats are loaded.
+milesAtLastMidnight = stats.milesTraveled;
+lastKnownDay        = Math.floor(stats.daysTraveled);
+
+// --- Ambient temperature ---
+// °F at a tile, accounting for biome base temp, elevation, and time of day.
+// Coldest at midnight, warmest at noon; higher elevation = colder.
+function ambientTempAt(tx: number, ty: number): number {
+  const elev     = sampleElevation(tx, ty, elevation);
+  const moist    = sampleMoisture(tx, ty, moisture);
+  const riverVal = sampleRiver(tx, ty, river);
+  const lakeVal  = sampleLake(tx, ty, river);
+  const biome    = getBiome(elev, moist, riverVal, lakeVal);
+  const dayFrac  = stats.daysTraveled % 1;
+  const timeMod  = -Math.cos(dayFrac * Math.PI * 2) * 15; // -15 at midnight, +15 at noon
+  const elevMod  = -(elev - 0.5) * 60;                    // -30 at peaks, +12 in valleys
+  return BIOMES[biome].baseTemp + timeMod + elevMod;
 }
 
 // --- Distance from start ---
@@ -238,6 +334,14 @@ function adjacentWaterBiome(tx: number, ty: number): BiomeProperties | null {
   return null;
 }
 
+// Returns the first cardinal neighbor that is not a water tile, or null if all are water.
+function findAdjacentLandTile(tx: number, ty: number): { tileX: number; tileY: number } | null {
+  for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]] as [number,number][]) {
+    if (!isWaterBiome(tx + dx, ty + dy)) return { tileX: tx + dx, tileY: ty + dy };
+  }
+  return null;
+}
+
 function canEnterTile(tx: number, ty: number): boolean {
   if (!isWaterBiome(tx, ty)) return true;
   if (stats.canoes > 0) return true; // canoe allows all water travel
@@ -264,6 +368,94 @@ canoeEl.style.cssText = `
   display: none;
 `;
 document.body.appendChild(canoeEl);
+
+// --- Survey mode ---
+// Camera offset (tile units) while in survey. Reset to 0,0 on exit.
+let surveyOffsetX = 0;
+let surveyOffsetY = 0;
+let surveyMaxRange = 0; // computed tile radius the player may pan
+
+// Sample elevation advantage over the surrounding horizon to compute how
+// far the player can see. Higher ground → wider view.
+function computeSurveyRange(tx: number, ty: number): number {
+  const playerElev = sampleElevation(tx, ty, elevation);
+  const RING = 16;
+  const RING_RADIUS = 20; // tiles
+  let horizonSum = 0;
+  for (let i = 0; i < RING; i++) {
+    const angle = (i / RING) * Math.PI * 2;
+    horizonSum += sampleElevation(
+      tx + Math.round(Math.cos(angle) * RING_RADIUS),
+      ty + Math.round(Math.sin(angle) * RING_RADIUS),
+      elevation,
+    );
+  }
+  const horizonElev = horizonSum / RING;
+  const advantage   = Math.max(0, playerElev - horizonElev);
+  // Advantage of 0.10 (hills) → ~72 tiles; 0.25 (mountain peak) → ~144 tiles.
+  // Cap at what fits within the survey chunk radius to avoid black edges.
+  const maxPossible = SURVEY_CHUNK_RADIUS * CHUNK_WIDTH - 24;
+  return Math.round(Math.min(24 + advantage * 480, maxPossible));
+}
+
+function enterSurvey() {
+  const tx = Math.floor(player.tileX);
+  const ty = Math.floor(player.tileY);
+  surveyMaxRange = computeSurveyRange(tx, ty);
+  surveyOffsetX  = 0;
+  surveyOffsetY  = 0;
+  const rangeStr = (surveyMaxRange * 0.1).toFixed(1);
+  stats.activeAction = {
+    id: 'survey',
+    label: `Surveying (${rangeStr} mi range)`,
+    durationDays: Infinity,
+    progressDays: 0,
+  };
+  chunkManager.beginSurvey(tx, ty, SURVEY_CHUNK_RADIUS);
+  surveyTotalQueue = chunkManager.queueLength;
+  surveyCrosshair.style.display = 'block';
+  if (surveyTotalQueue > 0) surveyLoadBar.style.display = 'block';
+}
+
+function exitSurvey() {
+  surveyOffsetX = 0;
+  surveyOffsetY = 0;
+  chunkManager.endSurvey();
+  surveyCrosshair.style.display = 'none';
+  surveyLoadBar.style.display   = 'none';
+}
+
+// Survey crosshair: shown at center of screen while surveying.
+const surveyCrosshair = document.createElement('div');
+surveyCrosshair.textContent = '⊕';
+surveyCrosshair.style.cssText = `
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 22px;
+  color: rgba(255,255,255,0.55);
+  pointer-events: none;
+  z-index: 700;
+  display: none;
+  text-shadow: 0 0 6px rgba(0,0,0,0.8);
+`;
+document.body.appendChild(surveyCrosshair);
+
+// Thin progress bar at top of canvas showing async chunk load progress.
+const surveyLoadBar = document.createElement('div');
+surveyLoadBar.style.cssText = `
+  position: fixed;
+  top: 0; left: 0;
+  height: 2px;
+  background: rgba(160,210,255,0.7);
+  pointer-events: none;
+  z-index: 1001;
+  display: none;
+  transition: width 0.1s linear;
+`;
+document.body.appendChild(surveyLoadBar);
+
+let surveyTotalQueue = 0; // snapshot at beginSurvey to drive the load bar
 
 // --- Forage emoji animation ---
 function getPlayerScreenPos() {
@@ -381,9 +573,39 @@ function tick() {
                        : carryingCanoe ? { ...biomeProps, energyDrainPerTile: biomeProps.energyDrainPerTile * 2.2 }
                        : biomeProps;
 
+  // Survey mode: freeze the player and redirect WASD to camera pan instead.
+  const isSurveying = stats.activeAction?.id === 'survey';
+  if (isSurveying) {
+    const panX = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    const panY = (input.down  ? 1 : 0) - (input.up   ? 1 : 0);
+    if (panX !== 0 || panY !== 0) {
+      surveyOffsetX += panX * SURVEY_PAN_SPEED * delta;
+      surveyOffsetY += panY * SURVEY_PAN_SPEED * delta;
+      // Clamp to circular pan range
+      const dist = Math.sqrt(surveyOffsetX * surveyOffsetX + surveyOffsetY * surveyOffsetY);
+      if (dist > surveyMaxRange) {
+        surveyOffsetX = surveyOffsetX / dist * surveyMaxRange;
+        surveyOffsetY = surveyOffsetY / dist * surveyMaxRange;
+      }
+    }
+    // Update async-load progress bar
+    if (surveyTotalQueue > 0) {
+      const remaining = chunkManager.queueLength;
+      if (remaining === 0) {
+        surveyLoadBar.style.display = 'none';
+      } else {
+        const pct = (1 - remaining / surveyTotalQueue) * 100;
+        surveyLoadBar.style.display = 'block';
+        surveyLoadBar.style.width   = `${pct}%`;
+      }
+    }
+  }
+
+  const playerInput = isSurveying ? { up: false, down: false, left: false, right: false } : input;
+
   const prevX = player.visualX;
   const prevY = player.visualY;
-  player.update(input, delta, effectiveSpeed, canEnterTile);
+  player.update(playerInput, delta, effectiveSpeed, canEnterTile);
 
   // Swap player mesh for canoe emoji while paddling
   player.mesh.visible = !usingCanoe;
@@ -400,24 +622,35 @@ function tick() {
   const tilesMoved = Math.sqrt(dx * dx + dy * dy);
 
   playerMoving = tilesMoved > 1e-4;
-  if (playerMoving) radialMenu.closeAll();
+  if (playerMoving) {
+    radialMenu.closeAll();
+    if (stats.activeAction?.id === 'forage') stats.activeAction = null;
+  }
 
   // Auto-pickup: collect a dropped canoe when walking onto its tile
   if (droppedCanoes.tryPickup(tx, ty)) stats.canoes++;
 
-  // Stop build if player left the structure's tile (must run before prevAction is captured)
+  // Stop build if player left the required build tile.
+  // buildTileX/Y overrides the structure tile (used when the structure is placed
+  // on an adjacent tile, e.g. campfire, while the player stays on their own tile).
   if (stats.activeAction?.id.startsWith('build_') && stats.activeAction.structureIndex !== undefined) {
-    const tile = structures.getTile(stats.activeAction.structureIndex);
-    if (tile && (Math.floor(player.tileX) !== tile.tileX || Math.floor(player.tileY) !== tile.tileY)) {
+    const action = stats.activeAction;
+    const stayTile = (action.buildTileX !== undefined && action.buildTileY !== undefined)
+      ? { tileX: action.buildTileX, tileY: action.buildTileY }
+      : structures.getTile(action.structureIndex!);
+    if (stayTile && (Math.floor(player.tileX) !== stayTile.tileX || Math.floor(player.tileY) !== stayTile.tileY)) {
       stats.activeAction = null;
     }
   }
 
   const prevAction = stats.activeAction;
   const buildProgressBefore = prevAction?.id.startsWith('build_') ? prevAction.progressDays : -1;
+  const prevDaysTraveled = stats.daysTraveled;
 
-  const fishBiome = inWater ? effectiveBiome : (adjacentWaterBiome(tx, ty) ?? undefined);
-  const { timeTicking, forageEvents } = updateStats(stats, delta, tilesMoved, effectiveBiome, fishBiome);
+  const fishBiome   = inWater ? effectiveBiome : (adjacentWaterBiome(tx, ty) ?? undefined);
+  const currentTemp = ambientTempAt(tx, ty);
+  const warming     = structures.isWarmed(tx, ty);
+  const { timeTicking, forageEvents } = updateStats(stats, delta, tilesMoved, effectiveBiome, fishBiome, usingCanoe, currentTemp, warming);
 
   for (const ev of forageEvents) {
     showForageEmoji(ev.emoji);
@@ -443,17 +676,54 @@ function tick() {
       structures.complete(prevAction.structureIndex, stats);
     }
   }
+
+  // If survey was auto-stopped by sunset, clean up camera state.
+  if (prevAction?.id === 'survey' && !stats.activeAction) {
+    exitSurvey();
+  }
+
+  // Campfire fuel consumption: burns 1 timber per 2 game-hours from piles within 2 tiles.
+  const gameDaysElapsed = stats.daysTraveled - prevDaysTraveled;
+  if (gameDaysElapsed > 0) {
+    for (const { index, tileX: ftx, tileY: fty, fuelNeeded } of structures.tickCampfires(gameDaysElapsed)) {
+      const consumed = timberPiles.consumeFromAdjacent(ftx, fty, fuelNeeded, 2);
+      if (consumed < fuelNeeded) structures.burnOut(index);
+    }
+  }
+
+
+  // Midnight recap: when a new game-day begins, record how far the player
+  // walked during the day that just ended and show it until 9 AM.
+  const currentDay = Math.floor(stats.daysTraveled);
+  if (currentDay > lastKnownDay) {
+    const dayMiles = stats.milesTraveled - milesAtLastMidnight;
+    if (dayMiles >= 0.05) {
+      dailyRecapText.textContent = `Day ${lastKnownDay + 1}: ${dayMiles.toFixed(1)} miles traveled`;
+      dailyRecapEl.style.transition = 'none';
+      dailyRecapEl.style.opacity = '1';
+      hasRecapData = true;
+    }
+    milesAtLastMidnight = stats.milesTraveled;
+    lastKnownDay        = currentDay;
+  }
+  updateDailyRecap(stats.daysTraveled);
+
   if (stats.health <= 0) { showGameOver(); return; }
-  updateHud(stats, timeTicking, distanceFromStart(), carryingCanoe);
+  updateHud(stats, timeTicking, distanceFromStart(), currentTemp, carryingCanoe);
   updateNightOverlay(stats.daysTraveled);
   tileInspector.update();
   structures.update();
   droppedCanoes.update();
   timberPiles.update();
 
+  // During survey the player tile doesn't change, so normal ACTIVE_RADIUS
+  // window stays centered on the player. The survey async queue handles far chunks.
   chunkManager.update(player.visualX, player.visualY);
 
-  camera.position.set(player.mesh.position.x, player.mesh.position.y, 1);
+  // Camera follows player + survey pan offset (offset is 0,0 outside survey mode).
+  const camX = player.mesh.position.x + surveyOffsetX * TILE_SIZE;
+  const camY = player.mesh.position.y - surveyOffsetY * TILE_SIZE;
+  camera.position.set(camX, camY, 1);
 
   renderer.render(scene, camera);
 }

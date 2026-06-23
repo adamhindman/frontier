@@ -11,6 +11,7 @@ const plainsBiome: BiomeProperties = {
   color: '#6aaa38', elevMin: 0.42, elevMax: 0.55, speedMultiplier: 1.0,
   baseResources: { plants: 6, game: 5, water: 3, timber: 2, minerals: 2 },
   foodDrainPerTile: 0.06, waterDrainPerTile: 0.012, energyDrainPerTile: 0.3,
+  baseTemp: 65,
 };
 
 // Zero-resource biome: passive gather never triggers, safe for floor tests
@@ -22,16 +23,16 @@ const barrenBiome: BiomeProperties = {
 // ─── getMoraleLabel ──────────────────────────────────────────────────────────
 
 describe('getMoraleLabel', () => {
-  it('returns Despair for 0',   () => expect(getMoraleLabel(0)).toBe('Despair'));
-  it('returns Despair for 20',  () => expect(getMoraleLabel(20)).toBe('Despair'));
-  it('returns Dejected for 21', () => expect(getMoraleLabel(21)).toBe('Dejected'));
-  it('returns Dejected for 40', () => expect(getMoraleLabel(40)).toBe('Dejected'));
-  it('returns Weary for 41',    () => expect(getMoraleLabel(41)).toBe('Weary'));
-  it('returns Weary for 60',    () => expect(getMoraleLabel(60)).toBe('Weary'));
-  it('returns Resolute for 61', () => expect(getMoraleLabel(61)).toBe('Resolute'));
-  it('returns Resolute for 80', () => expect(getMoraleLabel(80)).toBe('Resolute'));
-  it('returns Elated for 81',   () => expect(getMoraleLabel(81)).toBe('Elated'));
-  it('returns Elated for 100',  () => expect(getMoraleLabel(100)).toBe('Elated'));
+  it('returns 😭 for 0',   () => expect(getMoraleLabel(0)).toBe('😭'));
+  it('returns 😭 for 20',  () => expect(getMoraleLabel(20)).toBe('😭'));
+  it('returns 😔 for 21', () => expect(getMoraleLabel(21)).toBe('😔'));
+  it('returns 😔 for 40', () => expect(getMoraleLabel(40)).toBe('😔'));
+  it('returns 😐 for 41',    () => expect(getMoraleLabel(41)).toBe('😐'));
+  it('returns 😐 for 60',    () => expect(getMoraleLabel(60)).toBe('😐'));
+  it('returns 🙂 for 61', () => expect(getMoraleLabel(61)).toBe('🙂'));
+  it('returns 🙂 for 80', () => expect(getMoraleLabel(80)).toBe('🙂'));
+  it('returns 😄 for 81',   () => expect(getMoraleLabel(81)).toBe('😄'));
+  it('returns 😄 for 100',  () => expect(getMoraleLabel(100)).toBe('😄'));
 });
 
 // ─── getWeightMultiplier ─────────────────────────────────────────────────────

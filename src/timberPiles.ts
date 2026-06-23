@@ -18,7 +18,13 @@ function getContentRect(canvas: HTMLCanvasElement) {
   return { x, y, w, h };
 }
 
-const PLACE_OFFSETS = [[0,1],[1,0],[-1,0],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1],[0,0]] as const;
+// Search rings for pile placement: radius 1 first, then radius 2 if all water.
+const PLACE_OFFSETS_R1 = [[0,1],[1,0],[-1,0],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1],[0,0]] as const;
+const PLACE_OFFSETS_R2 = [
+  [0,2],[2,0],[-2,0],[0,-2],
+  [1,2],[-1,2],[2,1],[2,-1],[-1,-2],[1,-2],[-2,1],[-2,-1],
+  [2,2],[-2,2],[2,-2],[-2,-2],
+] as const;
 
 export class TimberPileManager {
   private piles: TimberPile[] = [];
@@ -30,7 +36,8 @@ export class TimberPileManager {
     this.camera = camera;
   }
 
-  // Add timber near a position. Merges with existing adjacent pile or places a new one.
+  // Add timber near a position. Merges with existing adjacent pile or places a new one
+  // on the nearest non-water tile, searching radius 1 then radius 2.
   addAmount(nearTileX: number, nearTileY: number, amount: number, isWater?: (tx: number, ty: number) => boolean) {
     const existing = this.piles.find(p =>
       Math.abs(p.tileX - nearTileX) <= 1 && Math.abs(p.tileY - nearTileY) <= 1
@@ -40,28 +47,36 @@ export class TimberPileManager {
       this.updateTooltip(existing);
       return;
     }
-    const found = PLACE_OFFSETS.find(([dx, dy]) => !isWater?.(nearTileX + dx, nearTileY + dy));
-    const [ox, oy] = found ?? [0, 1];
+    const isLand = (dx: number, dy: number) => !isWater?.(nearTileX + dx, nearTileY + dy);
+    const r1 = PLACE_OFFSETS_R1.find(([dx, dy]) => isLand(dx, dy));
+    const r2 = r1 ?? PLACE_OFFSETS_R2.find(([dx, dy]) => isLand(dx, dy));
+    const [ox, oy] = r2 ?? [0, 1];
     this.createPile(nearTileX + ox, nearTileY + oy, amount);
   }
 
   // Total timber within 1 tile (8-directional + same tile).
   getAdjacentAmount(tileX: number, tileY: number): number {
+    return this.getAmountWithin(tileX, tileY, 1);
+  }
+
+  // Total timber within `radius` tiles of the given position.
+  getAmountWithin(tileX: number, tileY: number, radius: number): number {
     return this.piles
-      .filter(p => Math.abs(p.tileX - tileX) <= 1 && Math.abs(p.tileY - tileY) <= 1)
+      .filter(p => Math.abs(p.tileX - tileX) <= radius && Math.abs(p.tileY - tileY) <= radius)
       .reduce((sum, p) => sum + p.amount, 0);
   }
 
-  // Consume `amount` from adjacent piles, nearest first.
-  consumeFromAdjacent(tileX: number, tileY: number, amount: number) {
-    const adjacent = this.piles
-      .filter(p => Math.abs(p.tileX - tileX) <= 1 && Math.abs(p.tileY - tileY) <= 1)
+  // Consume `amount` from piles within `radius` tiles, nearest first.
+  // Returns the amount actually consumed (may be less than requested if piles run dry).
+  consumeFromAdjacent(tileX: number, tileY: number, amount: number, radius = 1): number {
+    const nearby = this.piles
+      .filter(p => Math.abs(p.tileX - tileX) <= radius && Math.abs(p.tileY - tileY) <= radius)
       .sort((a, b) =>
         Math.hypot(a.tileX - tileX, a.tileY - tileY) -
         Math.hypot(b.tileX - tileX, b.tileY - tileY)
       );
     let remaining = amount;
-    for (const pile of adjacent) {
+    for (const pile of nearby) {
       if (remaining <= 0) break;
       const consumed = Math.min(remaining, pile.amount);
       pile.amount -= consumed;
@@ -74,6 +89,7 @@ export class TimberPileManager {
         this.updateTooltip(pile);
       }
     }
+    return amount - remaining;
   }
 
   getSaveData(): { tileX: number; tileY: number; amount: number }[] {

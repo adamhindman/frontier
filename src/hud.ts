@@ -50,7 +50,7 @@ function getBandHeight(): number {
   return 44; // pillarboxed fallback: thin overlay on the game edges
 }
 
-export function createHud(seed?: string, onStopAction?: () => void): (stats: PlayerStats, timeTicking: boolean, distanceStr: string, portaging?: boolean) => void {
+export function createHud(seed?: string, onStopAction?: () => void): (stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging?: boolean) => void {
   // ── Top bar ────────────────────────────────────────────────────────────
   const topBar = document.createElement('div');
   topBar.style.cssText = `
@@ -65,6 +65,7 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
   const clockEl      = document.createElement('span');
   const dayEl        = document.createElement('span');
   const milesEl      = document.createElement('span');
+  const tempEl       = document.createElement('span');
   const actionEl     = document.createElement('span');
   const conditionsEl = document.createElement('span');
 
@@ -91,7 +92,8 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
   stopBtn.addEventListener('mouseleave', () => { stopBtn.style.color = '#c09060'; stopBtn.style.borderColor = 'rgba(255,255,255,0.15)'; });
   if (onStopAction) stopBtn.addEventListener('click', onStopAction);
 
-  topBar.append(clockEl, dayEl, milesEl, actionEl, stopBtn, conditionsEl);
+  tempEl.style.cssText = 'color: #90aacc; font: 11px monospace;';
+  topBar.append(clockEl, dayEl, milesEl, tempEl, actionEl, stopBtn, conditionsEl);
 
   // ── Seed display (top-right) ───────────────────────────────────────────
   if (seed !== undefined) {
@@ -139,25 +141,43 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
   `;
   document.body.appendChild(bottomBar);
 
-  // Left group: Health / Energy bars + Morale text
+  // Left column: Health / Energy / Temp bars
   const vitalsGroup = document.createElement('div');
   vitalsGroup.style.cssText = 'display: flex; flex-direction: column; gap: 5px;';
   const healthRow = makeBarRow('Health', '#c94040');
   const energyRow = makeBarRow('Energy', '#8a6fbf');
-  const moraleRow = makeTextRow('Morale');
-  vitalsGroup.append(healthRow.row, energyRow.row, moraleRow.row);
+  const tempRow   = makeBarRow('Temp',   '#4488cc');
+  vitalsGroup.append(healthRow.row, energyRow.row, tempRow.row);
 
-  // Middle group: Food + Water
+  // Right column: Food / Water
   const provisionsGroup = document.createElement('div');
   provisionsGroup.style.cssText = 'display: flex; flex-direction: column; gap: 5px;';
   const foodRow  = makeTextRow('Food');
   const waterRow = makeTextRow('Water');
   provisionsGroup.append(foodRow.row, waterRow.row);
 
-  // Wrapper aligns vitals and provisions at the top so Food lines up with Health
+  // Wrapper aligns both columns at the top so Food lines up with Health
   const statsWrapper = document.createElement('div');
   statsWrapper.style.cssText = 'display: flex; align-items: flex-start; gap: 28px;';
   statsWrapper.append(vitalsGroup, provisionsGroup);
+
+  // Center: Doom-guy morale face
+  const moraleEl = document.createElement('div');
+  moraleEl.style.cssText = `
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: grid;
+    place-items: center;
+    width: 72px;
+    height: 72px;
+    font-size: 48px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 8px;
+    pointer-events: none;
+  `;
+  bottomBar.appendChild(moraleEl);
 
   // Right: canoe indicator
   const canoeIndicator = document.createElement('div');
@@ -186,10 +206,11 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
   window.addEventListener('resize', layout);
 
   // ── Update (called every frame) ────────────────────────────────────────
-  return function updateHud(stats: PlayerStats, timeTicking: boolean, distanceStr: string, portaging = false) {
+  return function updateHud(stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging = false) {
     clockEl.style.opacity = timeTicking ? '1' : '0';
     dayEl.textContent     = formatTime(stats.daysTraveled);
     milesEl.textContent   = `· ${distanceStr}`;
+    tempEl.textContent    = `· ${Math.round(ambientTempF)}°F`;
 
     if (stats.activeAction) {
       if (isFinite(stats.activeAction.durationDays)) {
@@ -212,9 +233,11 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
     healthRow.val.textContent  = String(Math.round(stats.health));
     energyRow.fill.style.width = `${stats.energy}%`;
     energyRow.val.textContent  = String(Math.round(stats.energy));
-    moraleRow.val.textContent  = getMoraleLabel(stats.morale);
-    foodRow.val.textContent    = `${stats.food.toFixed(1)} lbs`;
-    waterRow.val.textContent   = `${stats.water.toFixed(1)} gal`;
+    tempRow.fill.style.width   = `${stats.bodyTemp ?? 100}%`;
+    tempRow.val.textContent    = String(Math.round(stats.bodyTemp ?? 100));
+    foodRow.val.textContent  = `${stats.food.toFixed(1)} lbs`;
+    waterRow.val.textContent = `${stats.water.toFixed(1)} gal`;
+    moraleEl.textContent     = getMoraleLabel(stats.morale);
 
     if (stats.canoes > 0) {
       canoeIndicator.style.display = 'flex';
