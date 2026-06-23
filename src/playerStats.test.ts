@@ -165,4 +165,129 @@ describe('updateStats build action', () => {
 
     expect(stats.activeAction).toBeNull();
   });
+
+  it('drains food and water while building', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    stats.food = 20; stats.water = 5;
+    stats.activeAction = {
+      id: 'build_canoe',
+      label: 'Building canoe',
+      durationDays: 1,
+      progressDays: 0,
+      structureIndex: 0,
+      timberPerHour: 10 / 24,
+    };
+
+    // Use 1/8 day (~3 hours) so we stay well before sunset
+    updateStats(stats, SECONDS_PER_DAY / 8, 0, barrenBiome);
+
+    expect(stats.food).toBeLessThan(20);
+    expect(stats.water).toBeLessThan(5);
+  });
+});
+
+// ─── updateStats — forage action ─────────────────────────────────────────────
+
+describe('updateStats forage action', () => {
+  it('stops at sunset', () => {
+    const stats = createStats();
+    stats.daysTraveled = 20 / 24; // 8 PM — sunset
+    stats.activeAction = { id: 'forage', label: 'Foraging', durationDays: Infinity, progressDays: 0 };
+
+    updateStats(stats, 0.016, 0, barrenBiome);
+
+    expect(stats.activeAction).toBeNull();
+  });
+
+  it('drains food and water continuously while foraging', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    stats.food = 20; stats.water = 5;
+    stats.activeAction = { id: 'forage', label: 'Foraging', durationDays: Infinity, progressDays: 0 };
+
+    updateStats(stats, SECONDS_PER_DAY / 4, 0, barrenBiome); // 6 game-hours
+
+    expect(stats.food).toBeLessThan(20);
+    expect(stats.water).toBeLessThan(5);
+  });
+
+  it('gains food per hour from plant resources', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    stats.food = 0;
+    stats.activeAction = { id: 'forage', label: 'Foraging', durationDays: Infinity, progressDays: 0 };
+
+    // Advance past one full in-game hour so the hourly roll fires
+    updateStats(stats, SECONDS_PER_DAY / 24 + 0.1, 0, plainsBiome);
+
+    expect(stats.food).toBeGreaterThan(0);
+  });
+
+  it('fishes when a water biome is adjacent (fishBiome provided)', () => {
+    const waterBiome: BiomeProperties = {
+      ...plainsBiome,
+      baseResources: { plants: 0, game: 5, water: 9, timber: 0, minerals: 0 },
+    };
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    stats.food = 0;
+    stats.activeAction = { id: 'forage', label: 'Foraging', durationDays: Infinity, progressDays: 0 };
+
+    // barrenBiome as land tile, waterBiome as adjacent water
+    updateStats(stats, SECONDS_PER_DAY / 24 + 0.1, 0, barrenBiome, waterBiome);
+
+    expect(stats.food).toBeGreaterThan(0);
+  });
+});
+
+// ─── updateStats — health and morale regeneration ────────────────────────────
+
+describe('updateStats regeneration', () => {
+  // Regen runs inside the timeTicking block, so movement is needed to advance time.
+  const slowMove = 0.01; // above MOVE_THRESHOLD (1e-4), negligible drain on barrenBiome
+
+  it('heals health when food, water, and energy are all above 0', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    stats.health = 50; stats.morale = 100;
+    stats.food = 15; stats.water = 3; stats.energy = 80;
+
+    updateStats(stats, SECONDS_PER_DAY / 4, slowMove, barrenBiome);
+
+    expect(stats.health).toBeGreaterThan(50);
+  });
+
+  it('does not heal when food is 0', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    stats.health = 80;
+    stats.food = 0; stats.water = 3; stats.energy = 80;
+
+    updateStats(stats, SECONDS_PER_DAY / 4, slowMove, barrenBiome);
+
+    expect(stats.health).toBeLessThan(80); // health drains due to no food
+  });
+
+  it('increases morale when food, water, and energy are all above 0', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    stats.morale = 40; stats.health = 100;
+    stats.food = 15; stats.water = 3; stats.energy = 80;
+
+    updateStats(stats, SECONDS_PER_DAY / 4, slowMove, barrenBiome);
+
+    expect(stats.morale).toBeGreaterThan(40);
+  });
+
+  it('does not increase morale when water is 0', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    stats.morale = 40;
+    stats.food = 15; stats.water = 0; stats.energy = 80;
+
+    updateStats(stats, SECONDS_PER_DAY / 4, slowMove, barrenBiome);
+
+    expect(stats.morale).toBeLessThanOrEqual(40);
+  });
 });

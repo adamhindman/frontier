@@ -1,13 +1,15 @@
 import type { PlayerStats } from './playerStats';
 import type { StructureType } from './structures';
 
-const SAVE_VERSION = 1;
+const SAVE_VERSION = 2;
 
 export interface SaveData {
   version: number;
   stats: PlayerStats;
   playerTileX: number;
   playerTileY: number;
+  startTileX: number;
+  startTileY: number;
   structures: { tileX: number; tileY: number; type: StructureType; progressDays: number; complete: boolean }[];
   droppedCanoes: { tileX: number; tileY: number }[];
   timberPiles: { tileX: number; tileY: number; amount: number }[];
@@ -22,6 +24,8 @@ export function saveGame(
   stats: PlayerStats,
   playerTileX: number,
   playerTileY: number,
+  startTileX: number,
+  startTileY: number,
   structures: SaveData['structures'],
   droppedCanoes: SaveData['droppedCanoes'],
   timberPiles: SaveData['timberPiles'],
@@ -31,6 +35,8 @@ export function saveGame(
     stats: { ...stats, activeAction: null }, // don't restore mid-action
     playerTileX,
     playerTileY,
+    startTileX,
+    startTileY,
     structures,
     droppedCanoes,
     timberPiles,

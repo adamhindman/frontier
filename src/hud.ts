@@ -50,7 +50,7 @@ function getBandHeight(): number {
   return 44; // pillarboxed fallback: thin overlay on the game edges
 }
 
-export function createHud(seed?: string, onStopAction?: () => void): (stats: PlayerStats, timeTicking: boolean, portaging?: boolean) => void {
+export function createHud(seed?: string, onStopAction?: () => void): (stats: PlayerStats, timeTicking: boolean, distanceStr: string, portaging?: boolean) => void {
   // ── Top bar ────────────────────────────────────────────────────────────
   const topBar = document.createElement('div');
   topBar.style.cssText = `
@@ -141,7 +141,7 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
 
   // Left group: Health / Energy bars + Morale text
   const vitalsGroup = document.createElement('div');
-  vitalsGroup.style.cssText = 'display: flex; flex-direction: column; justify-content: center; gap: 5px;';
+  vitalsGroup.style.cssText = 'display: flex; flex-direction: column; gap: 5px;';
   const healthRow = makeBarRow('Health', '#c94040');
   const energyRow = makeBarRow('Energy', '#8a6fbf');
   const moraleRow = makeTextRow('Morale');
@@ -149,10 +149,15 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
 
   // Middle group: Food + Water
   const provisionsGroup = document.createElement('div');
-  provisionsGroup.style.cssText = 'display: flex; flex-direction: column; justify-content: center; gap: 5px; margin-left: 28px;';
+  provisionsGroup.style.cssText = 'display: flex; flex-direction: column; gap: 5px;';
   const foodRow  = makeTextRow('Food');
   const waterRow = makeTextRow('Water');
   provisionsGroup.append(foodRow.row, waterRow.row);
+
+  // Wrapper aligns vitals and provisions at the top so Food lines up with Health
+  const statsWrapper = document.createElement('div');
+  statsWrapper.style.cssText = 'display: flex; align-items: flex-start; gap: 28px;';
+  statsWrapper.append(vitalsGroup, provisionsGroup);
 
   // Right: canoe indicator
   const canoeIndicator = document.createElement('div');
@@ -169,7 +174,7 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
   canoeIndicator.innerHTML = '🛶<span style="font: 13px monospace; color: #aaa;"></span>';
   const canoeCount = canoeIndicator.querySelector('span') as HTMLSpanElement;
 
-  bottomBar.append(vitalsGroup, provisionsGroup, canoeIndicator);
+  bottomBar.append(statsWrapper, canoeIndicator);
 
   // ── Layout: set bar heights to match letterbox bands ───────────────────
   function layout() {
@@ -181,10 +186,10 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
   window.addEventListener('resize', layout);
 
   // ── Update (called every frame) ────────────────────────────────────────
-  return function updateHud(stats: PlayerStats, timeTicking: boolean, portaging = false) {
+  return function updateHud(stats: PlayerStats, timeTicking: boolean, distanceStr: string, portaging = false) {
     clockEl.style.opacity = timeTicking ? '1' : '0';
     dayEl.textContent     = formatTime(stats.daysTraveled);
-    milesEl.textContent   = `· ${stats.milesTraveled.toFixed(1)} mi`;
+    milesEl.textContent   = `· ${distanceStr}`;
 
     if (stats.activeAction) {
       if (isFinite(stats.activeAction.durationDays)) {

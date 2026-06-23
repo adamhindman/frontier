@@ -4,14 +4,14 @@ import { ChunkManager } from './chunkManager';
 import { Player } from './player';
 import { createInputHandler } from './input';
 import { createTileInspector } from './tileInspector';
-import { createStats, updateStats, getWeightMultiplier, isDaylight } from './playerStats';
+import { createStats, updateStats, getWeightMultiplier, isDaylight, MILES_PER_TILE } from './playerStats';
 import { createHud } from './hud';
 import { StructureManager, DroppedCanoeManager, CANOE_TIMBER_COST, SHELTER_TIMBER_COST, STRUCTURE_CONFIGS } from './structures';
 import { TimberPileManager } from './timberPiles';
 import { saveGame, loadGame, deleteSave } from './save';
 import { createRadialMenu } from './radialMenu';
 import { sampleElevation, sampleMoisture, sampleRiver, sampleLake } from './noise';
-import { getBiome, BIOMES } from './biomes';
+import { getBiome, BIOMES, BiomeProperties } from './biomes';
 import { SEED, CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
 
 // --- Scene ---
@@ -78,11 +78,6 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
       action: () => { stats.activeAction = { id: 'forage', label: 'Foraging', durationDays: Infinity, progressDays: 0 }; },
     },
     {
-      label: 'Hunt',
-      disabled: !daylight,
-      action: () => { stats.activeAction = { id: 'hunt', label: 'Hunting', durationDays: Infinity, progressDays: 0 }; },
-    },
-    {
       label: 'Harvest',
       disabled: !daylight,
       children: [
@@ -95,7 +90,7 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
       disabled: stats.canoes === 0,
       action: () => {
         stats.canoes--;
-        droppedCanoes.drop(Math.floor(player.tileX), Math.floor(player.tileY));
+        droppedCanoes.drop(Math.floor(player.tileX) + 1, Math.floor(player.tileY));
       },
     },
     {
@@ -183,10 +178,14 @@ const droppedCanoes = new DroppedCanoeManager(renderer.domElement, camera);
 const timberPiles   = new TimberPileManager(renderer.domElement, camera);
 
 // --- Persistence ---
+let startTileX = Math.floor(player.tileX);
+let startTileY = Math.floor(player.tileY);
+
 function doSave() {
   saveGame(
     currentSeed, stats,
     Math.floor(player.tileX), Math.floor(player.tileY),
+    startTileX, startTileY,
     structures.getSaveData(),
     droppedCanoes.getSaveData(),
     timberPiles.getSaveData(),
@@ -197,9 +196,24 @@ const save = loadGame(currentSeed);
 if (save) {
   Object.assign(stats, save.stats);
   player.teleport(save.playerTileX, save.playerTileY);
-  for (const s of save.structures)    structures.restore(s.tileX, s.tileY, s.type, s.progressDays, s.complete);
-  for (const c of save.droppedCanoes) droppedCanoes.drop(c.tileX, c.tileY);
-  for (const p of save.timberPiles)   timberPiles.restorePile(p.tileX, p.tileY, p.amount);
+  startTileX = save.startTileX ?? Math.floor(player.tileX);
+  startTileY = save.startTileY ?? Math.floor(player.tileY);
+  for (const s of save.structures    ?? []) structures.restore(s.tileX, s.tileY, s.type, s.progressDays, s.complete);
+  for (const c of save.droppedCanoes ?? []) droppedCanoes.drop(c.tileX, c.tileY);
+  for (const p of save.timberPiles   ?? []) timberPiles.restorePile(p.tileX, p.tileY, p.amount);
+}
+
+// --- Distance from start ---
+const COMPASS_DIRS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'] as const;
+
+function distanceFromStart(): string {
+  const dx = player.tileX - startTileX;
+  const dy = player.tileY - startTileY;
+  const miles = Math.sqrt(dx * dx + dy * dy) * MILES_PER_TILE;
+  if (miles < 0.1) return 'at start';
+  const angleDeg = ((Math.atan2(dx, -dy) * 180 / Math.PI) + 360) % 360;
+  const dir = COMPASS_DIRS[Math.round(angleDeg / 22.5) % 16];
+  return `${miles.toFixed(1)} mi ${dir}`;
 }
 
 window.addEventListener('beforeunload', doSave);
@@ -209,6 +223,19 @@ setInterval(doSave, 60_000);
 function isWaterBiome(tx: number, ty: number): boolean {
   const b = getBiome(sampleElevation(tx, ty, elevation), sampleMoisture(tx, ty, moisture), sampleRiver(tx, ty, river), sampleLake(tx, ty, river));
   return b === 'deep_water' || b === 'shallow_water';
+}
+
+function adjacentWaterBiome(tx: number, ty: number): BiomeProperties | null {
+  for (let ddx = -1; ddx <= 1; ddx++) {
+    for (let ddy = -1; ddy <= 1; ddy++) {
+      if (ddx === 0 && ddy === 0) continue;
+      if (isWaterBiome(tx + ddx, ty + ddy)) {
+        const b = getBiome(sampleElevation(tx + ddx, ty + ddy, elevation), sampleMoisture(tx + ddx, ty + ddy, moisture), sampleRiver(tx + ddx, ty + ddy, river), sampleLake(tx + ddx, ty + ddy, river));
+        return BIOMES[b];
+      }
+    }
+  }
+  return null;
 }
 
 function canEnterTile(tx: number, ty: number): boolean {
@@ -389,7 +416,8 @@ function tick() {
   const prevAction = stats.activeAction;
   const buildProgressBefore = prevAction?.id.startsWith('build_') ? prevAction.progressDays : -1;
 
-  const { timeTicking, forageEvents } = updateStats(stats, delta, tilesMoved, effectiveBiome);
+  const fishBiome = inWater ? effectiveBiome : (adjacentWaterBiome(tx, ty) ?? undefined);
+  const { timeTicking, forageEvents } = updateStats(stats, delta, tilesMoved, effectiveBiome, fishBiome);
 
   for (const ev of forageEvents) {
     showForageEmoji(ev.emoji);
@@ -416,7 +444,7 @@ function tick() {
     }
   }
   if (stats.health <= 0) { showGameOver(); return; }
-  updateHud(stats, timeTicking, carryingCanoe);
+  updateHud(stats, timeTicking, distanceFromStart(), carryingCanoe);
   updateNightOverlay(stats.daysTraveled);
   tileInspector.update();
   structures.update();

@@ -78,7 +78,7 @@ Carrying a canoe also sets `effectiveSpeed = 1.5` on water (vs 0.10–0.35 on fo
 - `food` (lbs), `water` (gal) — capacities: `FOOD_CAPACITY_LBS = 30`, `WATER_CAPACITY_GAL = 10`
 - `timber`, `minerals` — harvested resources; capacities: `TIMBER_CAPACITY = 50`, `MINERALS_CAPACITY = 50`
 - `canoes` — completed canoes in inventory
-- `milesTraveled`, `daysTraveled`, `daysTraveledSinceRest`
+- `daysTraveled`, `daysTraveledSinceRest`
 - `statusConditions: StatusCondition[]`, `activeAction: ActiveAction | null`
 
 **`ActiveAction`** optional fields beyond the base `{id, label, durationDays, progressDays}`:
@@ -89,12 +89,15 @@ Carrying a canoe also sets `effectiveSpeed = 1.5` on water (vs 0.10–0.35 on fo
 | id | duration | stops at sunset | notes |
 |---|---|---|---|
 | `rest` | finite | no | time-accelerated; food/water drain, energy gain |
-| `forage` | Infinity | yes | per-hour food/water gain |
-| `hunt` | Infinity | yes | per-hour food gain |
+| `forage` | Infinity | yes | smart gather: fishes if `fishBiome` provided, else hunts/forages; continuous food/water drain; per-hour food+water gain |
 | `harvest_timber` | Infinity | yes | per-hour timber gain |
 | `harvest_minerals` | Infinity | yes | per-hour minerals gain |
-| `build_canoe` | 1 day (24h) | yes | per-hour timber deduction; stops if player leaves tile |
-| `build_shelter` | 8/24 day | yes | per-hour timber deduction; stops if player leaves tile |
+| `build_canoe` | 1 day (24h) | yes | per-hour timber deduction + continuous food/water drain; stops if player leaves tile |
+| `build_shelter` | 8/24 day | yes | per-hour timber deduction + continuous food/water drain; stops if player leaves tile |
+
+**Smart forage logic (per in-game hour):** Compares `water/WATER_CAPACITY_GAL` vs `food/FOOD_CAPACITY_LBS` ratios. Gathers the more-needed resource first, then the other. Food source priority: if `fishBiome` param provided → fish (🐟); else max(game, plants) yield → hunt (🍖) or forage (🌿). `fishBiome` is computed in `main.ts` as the adjacent water tile's biome (or current biome if in canoe on water).
+
+**Health and morale regeneration:** When `food > 0 && water > 0 && energy > 0`, health regenerates at `(0.2 + 0.8 * morale/100) * 12` hp/day and morale regenerates at `(0.2 + 0.8 * health/100) * 40` /day. Both have a non-zero floor so recovery is always possible when supplied.
 
 **Weight multiplier**: `max(0.5, 1 − (food + water) × 0.01)` — timber and minerals do not add weight.
 
@@ -125,8 +128,12 @@ Stack-based nested radial menu. Open with spacebar; Escape cancels any active ac
 
 Context-sensitive disabling rules:
 - **Rest**: disabled on water tiles
-- **Forage, Hunt, Harvest**: disabled at night
+- **Forage, Harvest**: disabled at night
 - **Build**: disabled at night; sub-items show "Resume X" if an unfinished structure of that type is at the player's tile; disabled if timber < cost (new builds only)
+
+### Distance from start (`main.ts`)
+
+`distanceFromStart()` computes straight-line distance from the player's spawn tile to their current position in miles (`MILES_PER_TILE = 0.1`), plus a 16-point compass bearing (`N`, `NNE`, … `NNW`). Displayed in the HUD as e.g. `3.2 mi NNE`; shows `at start` within 0.1 miles. The start tile is saved in `SaveData` (`startTileX`, `startTileY`) and restored on load. Save format is `SAVE_VERSION = 2`.
 
 ### Tile inspector (`tileInspector.ts`, `coordinates.ts`)
 
@@ -150,7 +157,7 @@ Structure costs/durations in `structures.ts`: `CANOE_TIMBER_COST`, `SHELTER_TIMB
 ## Tests
 
 - `coordinates.test.ts` — `canvasCoordsToTile()` with various camera positions
-- `playerStats.test.ts` — `getMoraleLabel()` boundaries, `getWeightMultiplier()`, `createStats()` field initialization, `updateStats()` build action timber deduction
+- `playerStats.test.ts` — `getMoraleLabel()` boundaries, `getWeightMultiplier()`, `createStats()` field initialization, `updateStats()` build action (drain + completion + night stop), forage action (drain, hourly gain, fishing with `fishBiome`), health/morale regeneration
 - `biomes.test.ts` — `getBiome()` elevation thresholds, river/lake overrides, water detection
 
 ## Planned features
