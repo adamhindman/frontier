@@ -10,7 +10,6 @@ export interface RadialItem {
 }
 
 const RADIUS  = 110;
-const BTN_W   = 88;
 const BTN_H   = 44;
 const ANIM_MS = 180;
 const LEAD_MS = 70; // circle leads the buttons by this many ms
@@ -144,8 +143,10 @@ export function createRadialMenu(
     const level: MenuLevel = { div: levelDiv, btns: [], ring, items, openedBy, expandedChild: -1 };
     const btnsForAnim: HTMLDivElement[] = [];
 
+    const arcSpan  = items.length === 1 ? 0 : Math.PI * 5 / 3; // 300° arc, centered at top
+    const arcStart = -Math.PI / 2 - arcSpan / 2;
     for (let i = 0; i < items.length; i++) {
-      const angle = -Math.PI / 2 + i * (Math.PI * 2 / items.length);
+      const angle = items.length === 1 ? -Math.PI / 2 : arcStart + (i / (items.length - 1)) * arcSpan;
       const bx    = cx + Math.cos(angle) * RADIUS;
       const by    = cy + Math.sin(angle) * RADIUS;
       const item  = items[i];
@@ -157,10 +158,10 @@ export function createRadialMenu(
       btn.innerHTML = `<span style="opacity:0.45;font-size:10px;margin-right:5px">${i + 1}</span>${item.label}${hasChildren ? ' ›' : ''}`;
       btn.style.cssText = `
         position: absolute;
-        left: ${bx - BTN_W / 2}px;
-        top:  ${by - BTN_H / 2}px;
-        width: ${BTN_W}px;
+        left: ${bx}px;
+        top:  ${by}px;
         height: ${BTN_H}px;
+        padding: 0 14px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -173,9 +174,9 @@ export function createRadialMenu(
         pointer-events: ${isDisabled ? 'none' : 'auto'};
         cursor: ${isDisabled ? 'default' : 'pointer'};
         user-select: none;
-        white-space: pre-line;
+        white-space: nowrap;
         opacity: 0;
-        transform: translate(${spawnX - bx}px, ${spawnY - by}px);
+        transform: translate(calc(-50% + ${spawnX - bx}px), calc(-50% + ${spawnY - by}px));
       `;
 
       if (!isDisabled) {
@@ -236,7 +237,7 @@ export function createRadialMenu(
 
     btnsForAnim.forEach(b => {
       b.style.transition = `transform ${ANIM_MS}ms ease-out ${LEAD_MS}ms, opacity ${ANIM_MS}ms ease-out ${LEAD_MS}ms, background 0.08s, border-color 0.08s, color 0.08s`;
-      b.style.transform  = 'translate(0, 0)';
+      b.style.transform  = 'translate(-50%, -50%)';
       b.style.opacity    = '1';
     });
   }

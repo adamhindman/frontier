@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { PlayerStats } from './playerStats';
 import { TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
 
-export type StructureType = 'canoe' | 'shelter';
+export type StructureType = 'canoe' | 'shelter' | 'campfire';
 
 interface StructureConfig {
   emoji: string;
@@ -11,13 +11,18 @@ interface StructureConfig {
   timberCost: number;
 }
 
-export const CANOE_TIMBER_COST   = 10;
-export const SHELTER_TIMBER_COST = 25;
+export const CANOE_TIMBER_COST     = 10;
+export const SHELTER_TIMBER_COST   = 25;
+export const CAMPFIRE_TIMBER_COST  = 0;
 
 export const STRUCTURE_CONFIGS: Record<StructureType, StructureConfig> = {
-  canoe:   { emoji: '🛶', totalHours: 24, label: 'Canoe',   timberCost: CANOE_TIMBER_COST   },
-  shelter: { emoji: '🛖', totalHours: 8,  label: 'Shelter', timberCost: SHELTER_TIMBER_COST },
+  canoe:    { emoji: '🛶', totalHours: 24, label: 'Canoe',     timberCost: CANOE_TIMBER_COST    },
+  shelter:  { emoji: '🛖', totalHours: 8,  label: 'Shelter',   timberCost: SHELTER_TIMBER_COST  },
+  campfire: { emoji: '🔥', totalHours: 1,  label: 'Campfire',  timberCost: CAMPFIRE_TIMBER_COST },
 };
+
+// Campfire burns 1 timber unit per this many game-days.
+const CAMPFIRE_BURN_INTERVAL_DAYS = 2 / 24;
 
 interface PlacedStructure {
   tileX: number;
@@ -25,6 +30,7 @@ interface PlacedStructure {
   type: StructureType;
   complete: boolean;
   progressDays: number;
+  burnProgress: number; // game-days elapsed since campfire was lit (not persisted)
   el: HTMLDivElement;
   tooltipEl: HTMLDivElement;
 }
@@ -149,7 +155,7 @@ export class StructureManager {
     tooltipEl.textContent = `${cfg.label}\n0 / ${cfg.totalHours} hrs`;
 
     const idx = this.slots.length;
-    this.slots.push({ tileX, tileY, type, complete: false, progressDays: 0, el, tooltipEl });
+    this.slots.push({ tileX, tileY, type, complete: false, progressDays: 0, burnProgress: 0, el, tooltipEl });
     return idx;
   }
 
@@ -190,7 +196,64 @@ export class StructureManager {
       this.slots[index] = null;
     } else {
       s.tooltipEl.textContent = `${STRUCTURE_CONFIGS[s.type].label}\nComplete`;
+      if (s.type === 'campfire') s.el.style.fontSize = '26px'; // slightly larger when lit
     }
+  }
+
+  // Advance campfire burn timers by gameDays. Returns entries for each campfire that
+  // crossed a burn interval and needs fuel consumed by the caller.
+  // fuelNeeded is the integer number of timber units required this tick.
+  tickCampfires(gameDays: number): { index: number; tileX: number; tileY: number; fuelNeeded: number }[] {
+    const results: { index: number; tileX: number; tileY: number; fuelNeeded: number }[] = [];
+    for (let i = 0; i < this.slots.length; i++) {
+      const s = this.slots[i];
+      if (!s || !s.complete || s.type !== 'campfire') continue;
+      const ticksBefore = Math.floor(s.burnProgress / CAMPFIRE_BURN_INTERVAL_DAYS);
+      s.burnProgress += gameDays;
+      const ticksNow = Math.floor(s.burnProgress / CAMPFIRE_BURN_INTERVAL_DAYS);
+      const fuelNeeded = ticksNow - ticksBefore;
+      if (fuelNeeded > 0) results.push({ index: i, tileX: s.tileX, tileY: s.tileY, fuelNeeded });
+    }
+    return results;
+  }
+
+  // Extinguish all complete campfires within 1 tile of (tileX, tileY).
+  extinguishNearby(tileX: number, tileY: number) {
+    for (let i = 0; i < this.slots.length; i++) {
+      const s = this.slots[i];
+      if (!s || !s.complete || s.type !== 'campfire') continue;
+      if (Math.abs(s.tileX - tileX) <= 1 && Math.abs(s.tileY - tileY) <= 1) this.burnOut(i);
+    }
+  }
+
+  // Returns true if any complete campfire is within 1 tile of (tileX, tileY).
+  hasNearbyFire(tileX: number, tileY: number): boolean {
+    return this.slots.some(s =>
+      s !== null && s.complete && s.type === 'campfire' &&
+      Math.abs(s.tileX - tileX) <= 1 && Math.abs(s.tileY - tileY) <= 1
+    );
+  }
+
+  // Remove a campfire that has run out of fuel.
+  burnOut(index: number) {
+    const s = this.slots[index];
+    if (!s) return;
+    s.el.remove();
+    s.tooltipEl.remove();
+    this.slots[index] = null;
+  }
+
+  // Returns true when the player's tile is warmed by a nearby campfire or enclosing shelter.
+  isWarmed(tileX: number, tileY: number): boolean {
+    for (const s of this.slots) {
+      if (!s || !s.complete) continue;
+      if (s.type === 'campfire') {
+        if (Math.abs(s.tileX - tileX) <= 1 && Math.abs(s.tileY - tileY) <= 1) return true;
+      } else if (s.type === 'shelter') {
+        if (s.tileX === tileX && s.tileY === tileY) return true;
+      }
+    }
+    return false;
   }
 
   getSaveData(): { tileX: number; tileY: number; type: StructureType; progressDays: number; complete: boolean }[] {
