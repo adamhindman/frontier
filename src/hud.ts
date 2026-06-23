@@ -1,5 +1,5 @@
 import type { PlayerStats } from './playerStats';
-import { getMoraleLabel } from './playerStats';
+import { getMoraleLabel, getMoraleEmoji } from './playerStats';
 import { CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
 
 function formatTime(daysFractional: number): string {
@@ -39,6 +39,34 @@ function makeTextRow(label: string) {
   return { row, val };
 }
 
+// A reusable "stat widget": category label on top, large icon in the middle,
+// descriptive text below. Used for morale and future stats in the bottom bar.
+function makeStatWidget(topLabel: string) {
+  const el = document.createElement('div');
+  el.style.cssText = 'display: flex; flex-direction: column; align-items: center; gap: 3px; width: 58px;';
+
+  const top = document.createElement('div');
+  top.textContent = topLabel.toUpperCase();
+  top.style.cssText = 'color: #555; font: 11px/1 monospace; letter-spacing: 0.08em;';
+
+  const iconWrap = document.createElement('div');
+  iconWrap.style.cssText = `
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    font-size: 24px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 8px;
+  `;
+
+  const bottom = document.createElement('div');
+  bottom.style.cssText = 'color: #888; font: 11px/1 monospace; letter-spacing: 0.04em; text-align: center; width: 100%;';
+
+  el.append(top, iconWrap, bottom);
+  return { el, iconWrap, bottom };
+}
+
 // Returns the height of the top/bottom letterbox bands in CSS pixels.
 // Falls back to a small overlay height if the screen is pillarboxed instead.
 function getBandHeight(): number {
@@ -50,7 +78,7 @@ function getBandHeight(): number {
   return 44; // pillarboxed fallback: thin overlay on the game edges
 }
 
-export function createHud(seed?: string, onStopAction?: () => void): (stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging?: boolean) => void {
+export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?: () => void): (stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging?: boolean) => void {
   // ── Top bar ────────────────────────────────────────────────────────────
   const topBar = document.createElement('div');
   topBar.style.cssText = `
@@ -141,46 +169,42 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
   `;
   document.body.appendChild(bottomBar);
 
-  // Left column: Health / Energy / Temp bars
-  const vitalsGroup = document.createElement('div');
-  vitalsGroup.style.cssText = 'display: flex; flex-direction: column; gap: 5px;';
-  const healthRow = makeBarRow('Health', '#c94040');
-  const energyRow = makeBarRow('Energy', '#8a6fbf');
-  const tempRow   = makeBarRow('Temp',   '#4488cc');
-  vitalsGroup.append(healthRow.row, energyRow.row, tempRow.row);
-
-  // Right column: Food / Water
-  const provisionsGroup = document.createElement('div');
-  provisionsGroup.style.cssText = 'display: flex; flex-direction: column; gap: 5px;';
-  const foodRow  = makeTextRow('Food');
-  const waterRow = makeTextRow('Water');
-  provisionsGroup.append(foodRow.row, waterRow.row);
-
-  // Wrapper aligns both columns at the top so Food lines up with Health
-  const statsWrapper = document.createElement('div');
-  statsWrapper.style.cssText = 'display: flex; align-items: flex-start; gap: 28px;';
-  statsWrapper.append(vitalsGroup, provisionsGroup);
-
-  // Center: Doom-guy morale face
-  const moraleEl = document.createElement('div');
-  moraleEl.style.cssText = `
+  // Center group: all stat widgets
+  const widgetGroup = document.createElement('div');
+  widgetGroup.style.cssText = `
     position: absolute;
     left: 50%;
     top: 50%;
     transform: translate(-50%, -50%);
-    display: grid;
-    place-items: center;
-    width: 72px;
-    height: 72px;
-    font-size: 48px;
-    background: rgba(255,255,255,0.06);
-    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
     pointer-events: none;
   `;
-  bottomBar.appendChild(moraleEl);
+  bottomBar.appendChild(widgetGroup);
+
+  const healthWidget = makeStatWidget('Health');
+  healthWidget.iconWrap.textContent = '❤️';
+
+  const energyWidget = makeStatWidget('Energy');
+  energyWidget.iconWrap.textContent = '⚡';
+
+  const tempWidget = makeStatWidget('Temp');
+  tempWidget.iconWrap.textContent = '🌡️';
+
+  const foodWidget = makeStatWidget('Food');
+  foodWidget.iconWrap.textContent = '🍖';
+
+  const moraleWidget = makeStatWidget('Morale');
+
+  const waterWidget = makeStatWidget('Water');
+  waterWidget.iconWrap.textContent = '💧';
+
+  widgetGroup.append(healthWidget.el, energyWidget.el, tempWidget.el, moraleWidget.el, foodWidget.el, waterWidget.el);
 
   // Right: canoe indicator
   const canoeIndicator = document.createElement('div');
+  canoeIndicator.title = 'Drop canoe';
   canoeIndicator.style.cssText = `
     display: none;
     align-items: center;
@@ -190,11 +214,18 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
     font-size: 30px;
     line-height: 1;
     color: #ccc;
+    cursor: pointer;
+    pointer-events: auto;
+    opacity: 1;
+    transition: opacity 0.12s;
   `;
   canoeIndicator.innerHTML = '🛶<span style="font: 13px monospace; color: #aaa;"></span>';
   const canoeCount = canoeIndicator.querySelector('span') as HTMLSpanElement;
+  canoeIndicator.addEventListener('mouseenter', () => { canoeIndicator.style.opacity = '0.6'; });
+  canoeIndicator.addEventListener('mouseleave', () => { canoeIndicator.style.opacity = '1'; });
+  if (onDropCanoe) canoeIndicator.addEventListener('click', onDropCanoe);
 
-  bottomBar.append(statsWrapper, canoeIndicator);
+  bottomBar.append(canoeIndicator);
 
   // ── Layout: set bar heights to match letterbox bands ───────────────────
   function layout() {
@@ -229,15 +260,13 @@ export function createHud(seed?: string, onStopAction?: () => void): (stats: Pla
 
     conditionsEl.textContent = stats.statusConditions.map(c => `! ${c.label}`).join('  ');
 
-    healthRow.fill.style.width = `${stats.health}%`;
-    healthRow.val.textContent  = String(Math.round(stats.health));
-    energyRow.fill.style.width = `${stats.energy}%`;
-    energyRow.val.textContent  = String(Math.round(stats.energy));
-    tempRow.fill.style.width   = `${stats.bodyTemp ?? 100}%`;
-    tempRow.val.textContent    = String(Math.round(stats.bodyTemp ?? 100));
-    foodRow.val.textContent  = `${stats.food.toFixed(1)} lbs`;
-    waterRow.val.textContent = `${stats.water.toFixed(1)} gal`;
-    moraleEl.textContent     = getMoraleLabel(stats.morale);
+    healthWidget.bottom.textContent   = String(Math.round(stats.health));
+    energyWidget.bottom.textContent   = String(Math.round(stats.energy));
+    tempWidget.bottom.textContent     = String(Math.round(stats.bodyTemp ?? 100));
+    foodWidget.bottom.textContent     = `${stats.food.toFixed(1)} lbs`;
+    waterWidget.bottom.textContent    = `${stats.water.toFixed(1)} gal`;
+    moraleWidget.iconWrap.textContent = getMoraleEmoji(stats.morale);
+    moraleWidget.bottom.textContent   = getMoraleLabel(stats.morale);
 
     if (stats.canoes > 0) {
       canoeIndicator.style.display = 'flex';

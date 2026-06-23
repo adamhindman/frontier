@@ -48,7 +48,7 @@ export const BIOMES: Record<Biome, BiomeProperties> = {
   hills:         { color: '#8a7048', elevMin: 0.55, elevMax: 0.68, speedMultiplier: 0.55, baseResources: { plants: 4, game: 4, water: 3, timber: 3, minerals: 6 }, foodDrainPerTile: 0.010, waterDrainPerTile: 0.0038, energyDrainPerTile: 0.14, baseTemp: 52 },
   // High altitude: grey→white family
   mountains:     { color: '#7a7a7a', elevMin: 0.68, elevMax: 0.82, speedMultiplier: 0.25, baseResources: { plants: 1, game: 2, water: 4, timber: 1, minerals: 9 }, foodDrainPerTile: 0.014, waterDrainPerTile: 0.0045, energyDrainPerTile: 0.20, baseTemp: 35 },
-  snow:          { color: '#d8e0e8', elevMin: 0.82, elevMax: 1.00, speedMultiplier: 0.45, baseResources: { plants: 1, game: 2, water: 6, timber: 2, minerals: 4 }, foodDrainPerTile: 0.012, waterDrainPerTile: 0.0025, energyDrainPerTile: 0.15, baseTemp: 18 },
+  snow:          { color: '#d8e0e8', elevMin: 0.82, elevMax: 1.00, speedMultiplier: 0.45, baseResources: { plants: 1, game: 2, water: 6, timber: 1, minerals: 4 }, foodDrainPerTile: 0.012, waterDrainPerTile: 0.0025, energyDrainPerTile: 0.15, baseTemp: 18 },
 };
 
 export function getTileResources(biome: Biome): TileResources {

@@ -58,16 +58,18 @@ const input  = createInputHandler();
 const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY) => {
   const daylight = isDaylight(stats.daysTraveled);
   const onWater  = isWaterBiome(Math.floor(player.tileX), Math.floor(player.tileY));
+  const ptx = Math.floor(player.tileX), pty = Math.floor(player.tileY);
+  const aboveTreeline = sampleElevation(ptx, pty, elevation) >= 0.76;
   return [
     {
       label: 'Rest \'til Dawn',
-      disabled: onWater,
+      disabled: onWater || aboveTreeline,
       action: () => {
         const frac = stats.daysTraveled % 1;
         const morning = 6 / 24;
         const toNextDawn = frac < morning ? morning - frac : (1 + morning) - frac;
         const duration = toNextDawn < 2 / 24 ? toNextDawn + 1 : toNextDawn;
-        stats.activeAction = { id: 'rest', label: 'Resting', durationDays: duration, progressDays: 0 };
+        stats.activeAction = { id: 'rest', label: 'Resting', durationDays: duration, progressDays: 0, energyMultiplier: 1.5 };
         const ptx = Math.floor(player.tileX), pty = Math.floor(player.tileY);
         const fireTile = findAdjacentLandTile(ptx, pty) ?? { tileX: ptx + 1, tileY: pty };
         const idx = structures.add(fireTile.tileX, fireTile.tileY, 'campfire');
@@ -85,7 +87,7 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
     {
       label: 'Harvest',
       children: [
-        { label: 'Timber',   action: () => { stats.activeAction = { id: 'harvest_timber',   label: 'Harvesting timber',   durationDays: Infinity, progressDays: 0 }; } },
+        { label: 'Timber',   disabled: !daylight || aboveTreeline, action: () => { stats.activeAction = { id: 'harvest_timber',   label: 'Harvesting timber',   durationDays: Infinity, progressDays: 0 }; } },
         { label: 'Minerals', disabled: !daylight, action: () => { stats.activeAction = { id: 'harvest_minerals', label: 'Harvesting minerals', durationDays: Infinity, progressDays: 0 }; } },
       ],
     },
@@ -101,11 +103,6 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
         stats.canoes--;
         droppedCanoes.drop(Math.floor(player.tileX) + 1, Math.floor(player.tileY));
       },
-    },
-    {
-      label: 'Douse Fire',
-      disabled: !structures.hasNearbyFire(Math.floor(player.tileX), Math.floor(player.tileY)),
-      action: () => structures.extinguishNearby(Math.floor(player.tileX), Math.floor(player.tileY)),
     },
     {
       label: 'Build',
@@ -154,7 +151,7 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
           },
           {
             label: existingCampfire >= 0 ? 'Resume Campfire' : 'Campfire',
-            disabled: onWater || (existingCampfire < 0 && timberPiles.getAmountWithin(tileX, tileY, 3) < 1),
+            disabled: onWater || aboveTreeline || (existingCampfire < 0 && timberPiles.getAmountWithin(tileX, tileY, 3) < 1),
             action: () => {
               const cfg = STRUCTURE_CONFIGS.campfire;
               const timberPerHour = cfg.timberCost / cfg.totalHours;
@@ -249,6 +246,10 @@ const stats      = createStats();
 const updateHud  = createHud(currentSeed, () => {
   if (stats.activeAction?.id === 'survey') exitSurvey();
   stats.activeAction = null;
+}, () => {
+  if (stats.canoes <= 0) return;
+  stats.canoes--;
+  droppedCanoes.drop(Math.floor(player.tileX) + 1, Math.floor(player.tileY));
 });
 const structures    = new StructureManager(renderer.domElement, camera);
 const droppedCanoes = new DroppedCanoeManager(renderer.domElement, camera);
@@ -629,6 +630,9 @@ function tick() {
 
   // Auto-pickup: collect a dropped canoe when walking onto its tile
   if (droppedCanoes.tryPickup(tx, ty)) stats.canoes++;
+
+  // Stepping onto a campfire tile douses it
+  structures.extinguishAt(tx, ty);
 
   // Stop build if player left the required build tile.
   // buildTileX/Y overrides the structure tile (used when the structure is placed

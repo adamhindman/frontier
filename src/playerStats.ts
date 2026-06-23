@@ -16,6 +16,7 @@ export interface ActiveAction {
   timberPerHour?: number;  // for build actions: timber deducted per in-game hour
   buildTileX?: number;     // tile where the player must stay (if different from structure tile)
   buildTileY?: number;
+  energyMultiplier?: number; // multiplier on energy gain/drain for this action (default 1)
 }
 
 export interface PlayerStats {
@@ -70,14 +71,14 @@ const REST_ENERGY_GAIN_PER_DAY  = 25;
 
 const FORAGE_FOOD_DRAIN_PER_DAY    = 2.5; // lbs/day — light work
 const FORAGE_WATER_DRAIN_PER_DAY   = 0.75; // gal/day
-const FORAGE_ENERGY_DRAIN_PER_DAY  = 5;   // /day
+const FORAGE_ENERGY_GAIN_PER_DAY   = 8;   // /day — lighter than rest (25/day) but still restorative
 
 const MORALE_LEVELS = [
-  { min: 0, label: "😭" },
-  { min: 21, label: "😔" },
-  { min: 41, label: "😐" },
-  { min: 61, label: "🙂" },
-  { min: 81, label: "😄" },
+  { min: 0,  emoji: '😭', label: 'Despair'  },
+  { min: 21, emoji: '😔', label: 'Ruined'   },
+  { min: 41, emoji: '😐', label: 'Weary'    },
+  { min: 61, emoji: '🙂', label: 'Resolute' },
+  { min: 81, emoji: '😄', label: 'Elated'   },
 ] as const;
 
 export function getMoraleLabel(morale: number): string {
@@ -85,6 +86,13 @@ export function getMoraleLabel(morale: number): string {
     if (morale >= MORALE_LEVELS[i].min) return MORALE_LEVELS[i].label;
   }
   return MORALE_LEVELS[0].label;
+}
+
+export function getMoraleEmoji(morale: number): string {
+  for (let i = MORALE_LEVELS.length - 1; i >= 0; i--) {
+    if (morale >= MORALE_LEVELS[i].min) return MORALE_LEVELS[i].emoji;
+  }
+  return MORALE_LEVELS[0].emoji;
 }
 
 function stepMoraleUp(morale: number): number {
@@ -266,7 +274,7 @@ export function updateStats(
       if (stats.activeAction.id === 'rest') {
         stats.food   = Math.max(0,   stats.food   - gameDays * REST_FOOD_DRAIN_PER_DAY);
         stats.water  = Math.max(0,   stats.water  - gameDays * REST_WATER_DRAIN_PER_DAY);
-        stats.energy = Math.min(100, stats.energy + gameDays * REST_ENERGY_GAIN_PER_DAY);
+        stats.energy = Math.min(100, stats.energy + gameDays * REST_ENERGY_GAIN_PER_DAY * (stats.activeAction.energyMultiplier ?? 1));
 
         if (stats.activeAction.progressDays >= stats.activeAction.durationDays) {
           if (stats.activeAction.durationDays >= 1) {
@@ -280,10 +288,10 @@ export function updateStats(
         if (!isDaylight(stats.daysTraveled)) {
           stats.activeAction = null;
         } else {
-          // Continuous drains — foraging is light work
+          // Foraging drains food/water but slowly restores energy (lighter work than resting)
           stats.food   = Math.max(0, stats.food   - gameDays * FORAGE_FOOD_DRAIN_PER_DAY);
           stats.water  = Math.max(0, stats.water  - gameDays * FORAGE_WATER_DRAIN_PER_DAY);
-          stats.energy = Math.max(0, stats.energy - gameDays * FORAGE_ENERGY_DRAIN_PER_DAY);
+          stats.energy = Math.min(100, stats.energy + gameDays * FORAGE_ENERGY_GAIN_PER_DAY);
 
           // Roll once per elapsed in-game hour
           const hoursBefore = Math.floor((stats.activeAction.progressDays - gameDays) * 24);

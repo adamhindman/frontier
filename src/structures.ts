@@ -217,21 +217,13 @@ export class StructureManager {
     return results;
   }
 
-  // Extinguish all complete campfires within 1 tile of (tileX, tileY).
-  extinguishNearby(tileX: number, tileY: number) {
+  // Extinguish a complete campfire exactly at (tileX, tileY), if one exists.
+  extinguishAt(tileX: number, tileY: number) {
     for (let i = 0; i < this.slots.length; i++) {
       const s = this.slots[i];
       if (!s || !s.complete || s.type !== 'campfire') continue;
-      if (Math.abs(s.tileX - tileX) <= 1 && Math.abs(s.tileY - tileY) <= 1) this.burnOut(i);
+      if (s.tileX === tileX && s.tileY === tileY) { this.burnOut(i); return; }
     }
-  }
-
-  // Returns true if any complete campfire is within 1 tile of (tileX, tileY).
-  hasNearbyFire(tileX: number, tileY: number): boolean {
-    return this.slots.some(s =>
-      s !== null && s.complete && s.type === 'campfire' &&
-      Math.abs(s.tileX - tileX) <= 1 && Math.abs(s.tileY - tileY) <= 1
-    );
   }
 
   // Remove a campfire that has run out of fuel.
