@@ -1,10 +1,11 @@
 import type { PlayerStats } from './playerStats';
 import type { StructureType } from './structures';
 
-const SAVE_VERSION = 2;
+const SAVE_VERSION = 3;
 
 export interface SaveData {
   version: number;
+  weatherSeed: number;
   stats: PlayerStats;
   playerTileX: number;
   playerTileY: number;
@@ -21,6 +22,7 @@ function saveKey(seed: string): string {
 
 export function saveGame(
   seed: string,
+  weatherSeed: number,
   stats: PlayerStats,
   playerTileX: number,
   playerTileY: number,
@@ -32,6 +34,7 @@ export function saveGame(
 ): void {
   const data: SaveData = {
     version: SAVE_VERSION,
+    weatherSeed,
     stats: { ...stats, activeAction: null }, // don't restore mid-action
     playerTileX,
     playerTileY,

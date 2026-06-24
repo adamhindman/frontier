@@ -28,27 +28,28 @@ export interface BiomeProperties {
   waterDrainPerTile:  number; // water lost per tile traveled
   energyDrainPerTile: number; // energy lost per tile traveled
   baseTemp: number; // °F midday reference temperature for this biome
+  surveyVisibilityMult: number; // multiplier on survey range (dense canopy reduces it)
 }
 
 // Resource values are 0–10 base amounts before any modifiers are applied.
 // foodDrainPerTile / waterDrainPerTile are in pounds per tile traveled.
 // energyDrainPerTile is on the 0–100 abstract scale.
 export const BIOMES: Record<Biome, BiomeProperties> = {
-  //               color      elevMin  elevMax  speed   resources                                              food     water    energy   baseTemp
+  //               color      elevMin  elevMax  speed   resources                                              food     water    energy   baseTemp  surveyVis
   // Water family: all blue, deep→shallow gets lighter
-  deep_water:    { color: '#1e4d7a', elevMin: 0.00, elevMax: 0.28, speedMultiplier: 0.10, baseResources: { plants: 1, game: 3, water: 9, timber: 0, minerals: 1 }, foodDrainPerTile: 0.011, waterDrainPerTile: 0.0030, energyDrainPerTile: 0.22, baseTemp: 50 },
-  shallow_water: { color: '#3d80b8', elevMin: 0.28, elevMax: 0.38, speedMultiplier: 0.35, baseResources: { plants: 3, game: 4, water: 9, timber: 0, minerals: 1 }, foodDrainPerTile: 0.007, waterDrainPerTile: 0.0025, energyDrainPerTile: 0.14, baseTemp: 55 },
+  deep_water:    { color: '#1e4d7a', elevMin: 0.00, elevMax: 0.28, speedMultiplier: 0.10, baseResources: { plants: 1, game: 3, water: 9, timber: 0, minerals: 1 }, foodDrainPerTile: 0.011, waterDrainPerTile: 0.0030, energyDrainPerTile: 0.22, baseTemp: 40, surveyVisibilityMult: 1.00 },
+  shallow_water: { color: '#3d80b8', elevMin: 0.28, elevMax: 0.38, speedMultiplier: 0.35, baseResources: { plants: 3, game: 4, water: 9, timber: 0, minerals: 1 }, foodDrainPerTile: 0.007, waterDrainPerTile: 0.0025, energyDrainPerTile: 0.14, baseTemp: 44, surveyVisibilityMult: 1.00 },
   // Coastal land: warm sand, clearly not water
-  beach:         { color: '#c8a86e', elevMin: 0.38, elevMax: 0.42, speedMultiplier: 0.85, baseResources: { plants: 2, game: 2, water: 4, timber: 0, minerals: 3 }, foodDrainPerTile: 0.007, waterDrainPerTile: 0.0038, energyDrainPerTile: 0.09, baseTemp: 72 },
+  beach:         { color: '#c8a86e', elevMin: 0.38, elevMax: 0.42, speedMultiplier: 0.85, baseResources: { plants: 2, game: 2, water: 4, timber: 0, minerals: 3 }, foodDrainPerTile: 0.007, waterDrainPerTile: 0.0038, energyDrainPerTile: 0.09, baseTemp: 60, surveyVisibilityMult: 1.00 },
   // Land biomes
-  plains:        { color: '#6aaa38', elevMin: 0.42, elevMax: 0.55, speedMultiplier: 1.00, baseResources: { plants: 6, game: 5, water: 3, timber: 2, minerals: 2 }, foodDrainPerTile: 0.007, waterDrainPerTile: 0.0030, energyDrainPerTile: 0.075, baseTemp: 65 },
-  forest:        { color: '#2d6b1e', elevMin: 0.42, elevMax: 0.68, speedMultiplier: 0.70, baseResources: { plants: 8, game: 7, water: 5, timber: 9, minerals: 2 }, foodDrainPerTile: 0.006, waterDrainPerTile: 0.0025, energyDrainPerTile: 0.10, baseTemp: 58 },
-  swamp:         { color: '#4a6b3a', elevMin: 0.42, elevMax: 0.48, speedMultiplier: 0.40, baseResources: { plants: 7, game: 5, water: 8, timber: 5, minerals: 1 }, foodDrainPerTile: 0.010, waterDrainPerTile: 0.0030, energyDrainPerTile: 0.16, baseTemp: 62 },
-  desert:        { color: '#c8a035', elevMin: 0.42, elevMax: 0.55, speedMultiplier: 0.75, baseResources: { plants: 1, game: 1, water: 0, timber: 0, minerals: 6 }, foodDrainPerTile: 0.014, waterDrainPerTile: 0.0075, energyDrainPerTile: 0.13, baseTemp: 95 },
-  hills:         { color: '#8a7048', elevMin: 0.55, elevMax: 0.68, speedMultiplier: 0.55, baseResources: { plants: 4, game: 4, water: 3, timber: 3, minerals: 6 }, foodDrainPerTile: 0.010, waterDrainPerTile: 0.0038, energyDrainPerTile: 0.14, baseTemp: 52 },
+  plains:        { color: '#6aaa38', elevMin: 0.42, elevMax: 0.55, speedMultiplier: 1.00, baseResources: { plants: 6, game: 5, water: 3, timber: 2, minerals: 2 }, foodDrainPerTile: 0.007, waterDrainPerTile: 0.0030, energyDrainPerTile: 0.075, baseTemp: 52, surveyVisibilityMult: 1.00 },
+  forest:        { color: '#2d6b1e', elevMin: 0.42, elevMax: 0.68, speedMultiplier: 0.70, baseResources: { plants: 8, game: 7, water: 5, timber: 9, minerals: 2 }, foodDrainPerTile: 0.006, waterDrainPerTile: 0.0025, energyDrainPerTile: 0.10, baseTemp: 45, surveyVisibilityMult: 0.15 },
+  swamp:         { color: '#4a6b3a', elevMin: 0.42, elevMax: 0.48, speedMultiplier: 0.40, baseResources: { plants: 7, game: 5, water: 8, timber: 5, minerals: 1 }, foodDrainPerTile: 0.010, waterDrainPerTile: 0.0030, energyDrainPerTile: 0.16, baseTemp: 50, surveyVisibilityMult: 0.20 },
+  desert:        { color: '#c8a035', elevMin: 0.42, elevMax: 0.55, speedMultiplier: 0.75, baseResources: { plants: 1, game: 1, water: 0, timber: 0, minerals: 6 }, foodDrainPerTile: 0.014, waterDrainPerTile: 0.0075, energyDrainPerTile: 0.13, baseTemp: 88, surveyVisibilityMult: 1.00 },
+  hills:         { color: '#8a7048', elevMin: 0.55, elevMax: 0.68, speedMultiplier: 0.55, baseResources: { plants: 4, game: 4, water: 3, timber: 3, minerals: 6 }, foodDrainPerTile: 0.010, waterDrainPerTile: 0.0038, energyDrainPerTile: 0.14, baseTemp: 40, surveyVisibilityMult: 1.00 },
   // High altitude: grey→white family
-  mountains:     { color: '#7a7a7a', elevMin: 0.68, elevMax: 0.82, speedMultiplier: 0.25, baseResources: { plants: 1, game: 2, water: 4, timber: 1, minerals: 9 }, foodDrainPerTile: 0.014, waterDrainPerTile: 0.0045, energyDrainPerTile: 0.20, baseTemp: 35 },
-  snow:          { color: '#d8e0e8', elevMin: 0.82, elevMax: 1.00, speedMultiplier: 0.45, baseResources: { plants: 1, game: 2, water: 6, timber: 1, minerals: 4 }, foodDrainPerTile: 0.012, waterDrainPerTile: 0.0025, energyDrainPerTile: 0.15, baseTemp: 18 },
+  mountains:     { color: '#7a7a7a', elevMin: 0.68, elevMax: 0.82, speedMultiplier: 0.25, baseResources: { plants: 1, game: 2, water: 4, timber: 1, minerals: 9 }, foodDrainPerTile: 0.014, waterDrainPerTile: 0.0045, energyDrainPerTile: 0.20, baseTemp: 22, surveyVisibilityMult: 1.00 },
+  snow:          { color: '#d8e0e8', elevMin: 0.82, elevMax: 1.00, speedMultiplier: 0.45, baseResources: { plants: 1, game: 2, water: 6, timber: 1, minerals: 4 }, foodDrainPerTile: 0.012, waterDrainPerTile: 0.0025, energyDrainPerTile: 0.15, baseTemp: 8,  surveyVisibilityMult: 1.00 },
 };
 
 export function getTileResources(biome: Biome): TileResources {

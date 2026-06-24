@@ -4,7 +4,7 @@ import { ChunkManager } from './chunkManager';
 import { Player } from './player';
 import { createInputHandler } from './input';
 import { createTileInspector } from './tileInspector';
-import { createStats, updateStats, getWeightMultiplier, isDaylight, MILES_PER_TILE } from './playerStats';
+import { createStats, updateStats, getWeightMultiplier, isDaylight, MILES_PER_TILE, SECONDS_PER_DAY } from './playerStats';
 import { createHud } from './hud';
 import { StructureManager, DroppedCanoeManager, CANOE_TIMBER_COST, SHELTER_TIMBER_COST, CAMPFIRE_TIMBER_COST, STRUCTURE_CONFIGS } from './structures';
 import { TimberPileManager } from './timberPiles';
@@ -13,6 +13,8 @@ import { createRadialMenu } from './radialMenu';
 import { sampleElevation, sampleMoisture, sampleRiver, sampleLake } from './noise';
 import { getBiome, BIOMES, BiomeProperties } from './biomes';
 import { SEED, CANVAS_WIDTH, CANVAS_HEIGHT, TILE_SIZE, CHUNK_WIDTH, CHUNK_HEIGHT, SURVEY_CHUNK_RADIUS, SURVEY_PAN_SPEED } from './constants';
+import { createWeatherSystem, getWeatherEffects, weatherLabel, resolveWeatherForTemp } from './weather';
+import { createWeatherOverlay } from './weatherOverlay';
 
 // --- Scene ---
 const scene = new THREE.Scene();
@@ -47,6 +49,7 @@ function resolveSeed(): string {
   return SEED;
 }
 const currentSeed = resolveSeed();
+let weatherSeed = Math.floor(Math.random() * 0x100000000);
 
 // --- World ---
 const { elevation, moisture, river } = createNoiseGenerators(currentSeed);
@@ -59,7 +62,11 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
   const daylight = isDaylight(stats.daysTraveled);
   const onWater  = isWaterBiome(Math.floor(player.tileX), Math.floor(player.tileY));
   const ptx = Math.floor(player.tileX), pty = Math.floor(player.tileY);
-  const aboveTreeline = sampleElevation(ptx, pty, elevation) >= 0.76;
+  const tileElev      = sampleElevation(ptx, pty, elevation);
+  const aboveTreeline = tileElev >= 0.76;
+  const tileBiome     = getBiome(tileElev, sampleMoisture(ptx, pty, moisture), sampleRiver(ptx, pty, river), sampleLake(ptx, pty, river));
+  const biomeTimber   = BIOMES[tileBiome].baseResources.timber;
+  const inShelter     = structures.playerInCompletedShelter(ptx, pty);
   return [
     {
       label: 'Rest \'til Dawn',
@@ -69,31 +76,31 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
         const morning = 6 / 24;
         const toNextDawn = frac < morning ? morning - frac : (1 + morning) - frac;
         const duration = toNextDawn < 2 / 24 ? toNextDawn + 1 : toNextDawn;
+        autoDropCanoe(ptx, pty);
         stats.activeAction = { id: 'rest', label: 'Resting', durationDays: duration, progressDays: 0, energyMultiplier: 1.5 };
-        const ptx = Math.floor(player.tileX), pty = Math.floor(player.tileY);
-        const fireTile = findAdjacentLandTile(ptx, pty) ?? { tileX: ptx + 1, tileY: pty };
-        const idx = structures.add(fireTile.tileX, fireTile.tileY, 'campfire');
-        structures.complete(idx, stats);
-        const timberNeeded = Math.ceil(duration * 24 / 2);
-        timberPiles.addAmount(fireTile.tileX, fireTile.tileY, timberNeeded, isWaterBiome);
-        stats.bodyTemp = 100;
+        if (!inShelter) {
+          const fireTile = findAdjacentLandTile(ptx, pty) ?? { tileX: ptx + 1, tileY: pty };
+          const idx = structures.add(fireTile.tileX, fireTile.tileY, 'campfire');
+          structures.complete(idx, stats);
+          const timberNeeded = Math.ceil(duration * 24 / 2);
+          timberPiles.addAmount(fireTile.tileX, fireTile.tileY, timberNeeded, isWaterBiome);
+          stats.warmth = 100;
+        }
       },
     },
     {
       label: 'Forage',
-      disabled: !daylight,
+      disabled: !daylight || inShelter,
       action: () => { stats.activeAction = { id: 'forage', label: 'Foraging', durationDays: Infinity, progressDays: 0 }; },
     },
     {
-      label: 'Harvest',
-      children: [
-        { label: 'Timber',   disabled: !daylight || aboveTreeline, action: () => { stats.activeAction = { id: 'harvest_timber',   label: 'Harvesting timber',   durationDays: Infinity, progressDays: 0 }; } },
-        { label: 'Minerals', disabled: !daylight, action: () => { stats.activeAction = { id: 'harvest_minerals', label: 'Harvesting minerals', durationDays: Infinity, progressDays: 0 }; } },
-      ],
+      label: 'Harvest Timber',
+      disabled: !daylight || aboveTreeline || inShelter,
+      action: () => { stats.activeAction = { id: 'harvest_timber', label: 'Harvesting timber', durationDays: Infinity, progressDays: 0 }; },
     },
     {
       label: 'Survey',
-      disabled: !daylight || onWater,
+      disabled: !daylight || onWater || inShelter,
       action: () => enterSurvey(),
     },
     {
@@ -119,11 +126,12 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
           }
           return -1;
         })();
-        const adjacentTimber = timberPiles.getAdjacentAmount(tileX, tileY);
+        // Canoe and shelter harvest their own timber — disabled only if the biome has none
+        const canBuildFromBiome = !aboveTreeline && biomeTimber > 0;
         return [
           {
             label: existingCanoe >= 0 ? 'Resume Canoe' : `Canoe (${CANOE_TIMBER_COST}🪵)`,
-            disabled: !daylight || (existingCanoe < 0 && adjacentTimber < CANOE_TIMBER_COST),
+            disabled: !daylight || inShelter || (existingCanoe < 0 && !canBuildFromBiome),
             action: () => {
               const cfg = STRUCTURE_CONFIGS.canoe;
               const timberPerHour = cfg.timberCost / cfg.totalHours;
@@ -131,13 +139,15 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
                 stats.activeAction = { id: 'build_canoe', label: 'Building canoe', durationDays: cfg.totalHours / 24, progressDays: structures.getProgressDays(existingCanoe), structureIndex: existingCanoe, timberPerHour };
               } else {
                 const idx = structures.add(tileX, tileY, 'canoe');
+                const matTile = findAdjacentLandTile(tileX, tileY) ?? { tileX: tileX + 1, tileY: tileY };
+                timberPiles.addAmount(matTile.tileX, matTile.tileY, cfg.timberCost, isWaterBiome);
                 stats.activeAction = { id: 'build_canoe', label: 'Building canoe', durationDays: cfg.totalHours / 24, progressDays: 0, structureIndex: idx, timberPerHour };
               }
             },
           },
           {
             label: existingShelter >= 0 ? 'Resume Shelter' : `Shelter (${SHELTER_TIMBER_COST}🪵)`,
-            disabled: !daylight || (existingShelter < 0 && adjacentTimber < SHELTER_TIMBER_COST),
+            disabled: !daylight || inShelter || (existingShelter < 0 && !canBuildFromBiome),
             action: () => {
               const cfg = STRUCTURE_CONFIGS.shelter;
               const timberPerHour = cfg.timberCost / cfg.totalHours;
@@ -145,13 +155,15 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
                 stats.activeAction = { id: 'build_shelter', label: 'Building shelter', durationDays: cfg.totalHours / 24, progressDays: structures.getProgressDays(existingShelter), structureIndex: existingShelter, timberPerHour };
               } else {
                 const idx = structures.add(tileX, tileY, 'shelter');
+                const matTile = findAdjacentLandTile(tileX, tileY) ?? { tileX: tileX + 1, tileY: tileY };
+                timberPiles.addAmount(matTile.tileX, matTile.tileY, cfg.timberCost, isWaterBiome);
                 stats.activeAction = { id: 'build_shelter', label: 'Building shelter', durationDays: cfg.totalHours / 24, progressDays: 0, structureIndex: idx, timberPerHour };
               }
             },
           },
           {
             label: existingCampfire >= 0 ? 'Resume Campfire' : 'Campfire',
-            disabled: onWater || aboveTreeline || (existingCampfire < 0 && timberPiles.getAmountWithin(tileX, tileY, 3) < 1),
+            disabled: onWater || aboveTreeline || inShelter || (existingCampfire < 0 && timberPiles.getAmountWithin(tileX, tileY, 3) < 1),
             action: () => {
               const cfg = STRUCTURE_CONFIGS.campfire;
               const timberPerHour = cfg.timberCost / cfg.totalHours;
@@ -172,6 +184,12 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
   ];
 });
 window.addEventListener('keydown', (e) => {
+  // Any keypress dismisses a blur-triggered pause; don't let the key also act in-game.
+  if (blurPaused) {
+    blurPaused = false;
+    updatePauseState();
+    return;
+  }
   if (e.key === ' ') {
     e.preventDefault();
     radialMenu.openAtTile(player.tileX, player.tileY);
@@ -179,6 +197,10 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && stats.activeAction) {
     if (stats.activeAction.id === 'survey') exitSurvey();
     stats.activeAction = null;
+  }
+  if (e.key === 'p' || e.key === 'P') {
+    e.preventDefault();
+    toggleManualPause();
   }
 });
 
@@ -188,6 +210,44 @@ const tileInspector = createTileInspector(
   () => radialMenu.isOpen(),
   () => playerMoving,
 );
+
+// --- Pause state ---
+// Two independent pause sources: manual (P key / button) and blur (window lost focus).
+// Blur-pause requires an explicit click or keypress to dismiss; it does not auto-clear on focus.
+let manualPaused = false;
+let blurPaused   = false;
+
+const pauseOverlay = document.createElement('div');
+pauseOverlay.style.cssText = `
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.52);
+  display: none;
+  align-items: center; justify-content: center;
+  z-index: 1900;
+  font: 16px/1 monospace;
+  letter-spacing: 0.18em;
+  color: rgba(200,215,230,0.85);
+  pointer-events: none;
+`;
+pauseOverlay.textContent = 'PAUSED';
+document.body.appendChild(pauseOverlay);
+
+function updatePauseState() {
+  pauseOverlay.style.display = (manualPaused || blurPaused) ? 'flex' : 'none';
+}
+
+function toggleManualPause() {
+  manualPaused = !manualPaused;
+  updatePauseState();
+}
+
+// Auto-pause on blur; require explicit input to resume.
+window.addEventListener('blur', () => { blurPaused = true; updatePauseState(); });
+
+// Click anywhere to dismiss a blur-pause (but not a manual pause).
+window.addEventListener('click', () => {
+  if (blurPaused) { blurPaused = false; updatePauseState(); }
+});
 
 // --- Night overlay ---
 const nightOverlay = document.createElement('div');
@@ -247,9 +307,9 @@ const updateHud  = createHud(currentSeed, () => {
   if (stats.activeAction?.id === 'survey') exitSurvey();
   stats.activeAction = null;
 }, () => {
-  if (stats.canoes <= 0) return;
-  stats.canoes--;
-  droppedCanoes.drop(Math.floor(player.tileX) + 1, Math.floor(player.tileY));
+  autoDropCanoe(Math.floor(player.tileX), Math.floor(player.tileY));
+}, () => {
+  toggleManualPause();
 });
 const structures    = new StructureManager(renderer.domElement, camera);
 const droppedCanoes = new DroppedCanoeManager(renderer.domElement, camera);
@@ -260,8 +320,9 @@ let startTileX = Math.floor(player.tileX);
 let startTileY = Math.floor(player.tileY);
 
 function doSave() {
+  if (gameOver) return;
   saveGame(
-    currentSeed, stats,
+    currentSeed, weatherSeed, stats,
     Math.floor(player.tileX), Math.floor(player.tileY),
     startTileX, startTileY,
     structures.getSaveData(),
@@ -281,6 +342,10 @@ if (save) {
   for (const p of save.timberPiles   ?? []) timberPiles.restorePile(p.tileX, p.tileY, p.amount);
 }
 
+if (save?.weatherSeed !== undefined) weatherSeed = save.weatherSeed;
+const weatherSystem  = createWeatherSystem(weatherSeed);
+const weatherOverlay = createWeatherOverlay(renderer.domElement);
+
 // Initialize daily recap tracking after stats are loaded.
 milesAtLastMidnight = stats.milesTraveled;
 lastKnownDay        = Math.floor(stats.daysTraveled);
@@ -295,7 +360,7 @@ function ambientTempAt(tx: number, ty: number): number {
   const lakeVal  = sampleLake(tx, ty, river);
   const biome    = getBiome(elev, moist, riverVal, lakeVal);
   const dayFrac  = stats.daysTraveled % 1;
-  const timeMod  = -Math.cos(dayFrac * Math.PI * 2) * 15; // -15 at midnight, +15 at noon
+  const timeMod  = -Math.cos(dayFrac * Math.PI * 2) * 22; // -22 at midnight, +22 at noon
   const elevMod  = -(elev - 0.5) * 60;                    // -30 at peaks, +12 in valleys
   return BIOMES[biome].baseTemp + timeMod + elevMod;
 }
@@ -343,6 +408,30 @@ function findAdjacentLandTile(tx: number, ty: number): { tileX: number; tileY: n
   return null;
 }
 
+// Find the nearest non-water, unoccupied tile within 2 squares to drop a canoe.
+function findNearbyDropTile(fromX: number, fromY: number): { tileX: number; tileY: number } | null {
+  for (let r = 1; r <= 2; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const tx = fromX + dx, ty = fromY + dy;
+        if (isWaterBiome(tx, ty)) continue;
+        if (timberPiles.getAmountWithin(tx, ty, 0) > 0) continue;
+        if (structures.hasStructureAt(tx, ty)) continue;
+        return { tileX: tx, tileY: ty };
+      }
+    }
+  }
+  return null;
+}
+
+function autoDropCanoe(fromX: number, fromY: number) {
+  if (stats.canoes <= 0) return;
+  const tile = findNearbyDropTile(fromX, fromY) ?? { tileX: fromX + 1, tileY: fromY };
+  stats.canoes--;
+  droppedCanoes.drop(tile.tileX, tile.tileY);
+}
+
 function canEnterTile(tx: number, ty: number): boolean {
   if (!isWaterBiome(tx, ty)) return true;
   if (stats.canoes > 0) return true; // canoe allows all water travel
@@ -371,15 +460,17 @@ canoeEl.style.cssText = `
 document.body.appendChild(canoeEl);
 
 // --- Survey mode ---
-// Camera offset (tile units) while in survey. Reset to 0,0 on exit.
 let surveyOffsetX = 0;
 let surveyOffsetY = 0;
-let surveyMaxRange = 0; // computed tile radius the player may pan
+let surveyMaxRange  = 0;
+let forecastDepth   = 1;
 
 // Sample elevation advantage over the surrounding horizon to compute how
 // far the player can see. Higher ground → wider view.
-function computeSurveyRange(tx: number, ty: number): number {
+function computeSurveyRange(tx: number, ty: number, weatherVisMult = 1): number {
   const playerElev = sampleElevation(tx, ty, elevation);
+  const biome      = getBiome(playerElev, sampleMoisture(tx, ty, moisture), sampleRiver(tx, ty, river), sampleLake(tx, ty, river));
+  const visMult    = BIOMES[biome].surveyVisibilityMult * weatherVisMult;
   const RING = 16;
   const RING_RADIUS = 20; // tiles
   let horizonSum = 0;
@@ -396,13 +487,17 @@ function computeSurveyRange(tx: number, ty: number): number {
   // Advantage of 0.10 (hills) → ~72 tiles; 0.25 (mountain peak) → ~144 tiles.
   // Cap at what fits within the survey chunk radius to avoid black edges.
   const maxPossible = SURVEY_CHUNK_RADIUS * CHUNK_WIDTH - 24;
-  return Math.round(Math.min(24 + advantage * 480, maxPossible));
+  return Math.round(Math.min(24 + advantage * 480, maxPossible) * visMult);
 }
 
 function enterSurvey() {
+  forecastDepth  = 3;
   const tx = Math.floor(player.tileX);
   const ty = Math.floor(player.tileY);
-  surveyMaxRange = computeSurveyRange(tx, ty);
+  const currentWeatherForSurvey  = weatherSystem.getCurrentEvent(stats.daysTraveled);
+  const resolvedForSurvey        = resolveWeatherForTemp(currentWeatherForSurvey, ambientTempAt(tx, ty));
+  const weatherVisMult           = getWeatherEffects(resolvedForSurvey).surveyVisibilityMult;
+  surveyMaxRange = computeSurveyRange(tx, ty, weatherVisMult);
   surveyOffsetX  = 0;
   surveyOffsetY  = 0;
   const rangeStr = (surveyMaxRange * 0.1).toFixed(1);
@@ -551,6 +646,7 @@ function showGameOver() {
 
 // --- Game loop ---
 let lastTime = performance.now();
+let prevInShelter = false;
 
 function tick() {
   if (gameOver) return;
@@ -559,15 +655,25 @@ function tick() {
   const now   = performance.now();
   const delta = Math.min((now - lastTime) / 1000, 0.1);
   lastTime = now;
+  // Pause the simulation while the radial menu is open or the game is paused.
+  const isPaused = manualPaused || blurPaused;
+  const effectiveDelta = (isPaused || radialMenu.isOpen()) ? 0 : delta;
 
   const tx = Math.floor(player.tileX);
   const ty = Math.floor(player.tileY);
-  const currentBiome = getBiome(sampleElevation(tx, ty, elevation), sampleMoisture(tx, ty, moisture), sampleRiver(tx, ty, river), sampleLake(tx, ty, river));
-  const biomeProps   = BIOMES[currentBiome];
-  const inWater       = currentBiome === 'deep_water' || currentBiome === 'shallow_water';
-  const usingCanoe    = inWater && stats.canoes > 0;
-  const carryingCanoe = !inWater && stats.canoes > 0;
-  const effectiveSpeed = (usingCanoe ? 1.5 : biomeProps.speedMultiplier * (carryingCanoe ? 0.45 : 1)) * getWeightMultiplier(stats);
+  const currentBiome   = getBiome(sampleElevation(tx, ty, elevation), sampleMoisture(tx, ty, moisture), sampleRiver(tx, ty, river), sampleLake(tx, ty, river));
+  const biomeProps     = BIOMES[currentBiome];
+  const inWater        = currentBiome === 'deep_water' || currentBiome === 'shallow_water';
+  const usingCanoe     = inWater && stats.canoes > 0;
+  const carryingCanoe  = !inWater && stats.canoes > 0;
+  const inShelter      = structures.playerInCompletedShelter(tx, ty);
+  if (inShelter && !prevInShelter) autoDropCanoe(tx, ty);
+  prevInShelter = inShelter;
+  const currentTemp    = ambientTempAt(tx, ty);
+  const currentWeather  = weatherSystem.getCurrentEvent(stats.daysTraveled);
+  const resolvedWeather = resolveWeatherForTemp(currentWeather, currentTemp);
+  const weatherEffects  = getWeatherEffects(resolvedWeather);
+  const effectiveSpeed = (usingCanoe ? 1.5 : biomeProps.speedMultiplier * (carryingCanoe ? 0.45 : 1)) * getWeightMultiplier(stats) * weatherEffects.moveMult;
 
   // Canoeing is easy; portaging is exhausting
   const effectiveBiome = usingCanoe    ? { ...biomeProps, energyDrainPerTile: 0.10 }
@@ -580,8 +686,8 @@ function tick() {
     const panX = (input.right ? 1 : 0) - (input.left ? 1 : 0);
     const panY = (input.down  ? 1 : 0) - (input.up   ? 1 : 0);
     if (panX !== 0 || panY !== 0) {
-      surveyOffsetX += panX * SURVEY_PAN_SPEED * delta;
-      surveyOffsetY += panY * SURVEY_PAN_SPEED * delta;
+      surveyOffsetX += panX * SURVEY_PAN_SPEED * effectiveDelta;
+      surveyOffsetY += panY * SURVEY_PAN_SPEED * effectiveDelta;
       // Clamp to circular pan range
       const dist = Math.sqrt(surveyOffsetX * surveyOffsetX + surveyOffsetY * surveyOffsetY);
       if (dist > surveyMaxRange) {
@@ -606,7 +712,7 @@ function tick() {
 
   const prevX = player.visualX;
   const prevY = player.visualY;
-  player.update(playerInput, delta, effectiveSpeed, canEnterTile);
+  player.update(playerInput, effectiveDelta, effectiveSpeed, canEnterTile);
 
   // Swap player mesh for canoe emoji while paddling
   player.mesh.visible = !usingCanoe;
@@ -652,14 +758,34 @@ function tick() {
   const prevDaysTraveled = stats.daysTraveled;
 
   const fishBiome   = inWater ? effectiveBiome : (adjacentWaterBiome(tx, ty) ?? undefined);
-  const currentTemp = ambientTempAt(tx, ty);
-  const warming     = structures.isWarmed(tx, ty);
-  const { timeTicking, forageEvents } = updateStats(stats, delta, tilesMoved, effectiveBiome, fishBiome, usingCanoe, currentTemp, warming);
+  const warming: 'campfire' | 'shelter' | false = structures.isWarmed(tx, ty)
+    ? (inShelter ? 'shelter' : 'campfire')
+    : false;
+  const { timeTicking, forageEvents } = updateStats(stats, effectiveDelta, tilesMoved, effectiveBiome, fishBiome, usingCanoe, currentTemp, warming, weatherEffects);
+
+  // A shelter always keeps warmth above "Chilled" regardless of detection edge-cases.
+  if (inShelter) stats.warmth = Math.max(41, stats.warmth);
 
   for (const ev of forageEvents) {
     showForageEmoji(ev.emoji);
     if (ev.timber) timberPiles.addAmount(tx, ty, ev.timber, isWaterBiome);
   }
+
+  // Lightning: thunderstorm + high elevation + not sheltered = strike chance
+  if (resolvedWeather.type === 'thunderstorm' && !inShelter) {
+    const playerElev = sampleElevation(tx, ty, elevation);
+    if (playerElev >= 0.65) {
+      const exposureFactor = Math.min(1, (playerElev - 0.65) / 0.17);
+      const strikeProbThisFrame = (effectiveDelta / SECONDS_PER_DAY) * 5.4 * resolvedWeather.intensity * exposureFactor;
+      if (Math.random() < strikeProbThisFrame) {
+        const damage = 20 + Math.floor(Math.random() * 20);
+        stats.health = Math.max(0, stats.health - damage);
+        weatherOverlay.triggerLightningFlash();
+      }
+    }
+  }
+
+  weatherOverlay.update(resolvedWeather, effectiveDelta / SECONDS_PER_DAY, inShelter);
 
   // Deduct timber from adjacent piles once per build hour crossed
   if (prevAction?.id.startsWith('build_') && prevAction.timberPerHour !== undefined && prevAction.structureIndex !== undefined) {
@@ -713,7 +839,9 @@ function tick() {
   updateDailyRecap(stats.daysTraveled);
 
   if (stats.health <= 0) { showGameOver(); return; }
-  updateHud(stats, timeTicking, distanceFromStart(), currentTemp, carryingCanoe);
+  const forecast   = weatherSystem.getForecast(stats.daysTraveled, forecastDepth);
+  const weatherStr = [weatherLabel(resolvedWeather), ...forecast.map(e => weatherLabel(resolveWeatherForTemp(e, currentTemp)))].join(' → ');
+  updateHud(stats, timeTicking, distanceFromStart(), currentTemp, carryingCanoe, weatherStr, isPaused);
   updateNightOverlay(stats.daysTraveled);
   tileInspector.update();
   structures.update();

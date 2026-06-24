@@ -11,7 +11,7 @@ const plainsBiome: BiomeProperties = {
   color: '#6aaa38', elevMin: 0.42, elevMax: 0.55, speedMultiplier: 1.0,
   baseResources: { plants: 6, game: 5, water: 3, timber: 2, minerals: 2 },
   foodDrainPerTile: 0.06, waterDrainPerTile: 0.012, energyDrainPerTile: 0.3,
-  baseTemp: 65,
+  baseTemp: 65, surveyVisibilityMult: 1.0,
 };
 
 // Zero-resource biome: passive gather never triggers, safe for floor tests
@@ -239,6 +239,34 @@ describe('updateStats forage action', () => {
     updateStats(stats, SECONDS_PER_DAY / 24 + 0.1, 0, barrenBiome, waterBiome);
 
     expect(stats.food).toBeGreaterThan(0);
+  });
+});
+
+// ─── updateStats — warmth during rest ────────────────────────────────────────
+
+describe('updateStats warmth during rest', () => {
+  it('restores warmth to near 82 after a night resting in a shelter', () => {
+    const stats = createStats();
+    stats.daysTraveled = 20 / 24; // 8 PM
+    stats.warmth = 30; // Cold
+    // Half-day rest: accelerated to complete in 1.5 real seconds
+    stats.activeAction = { id: 'rest', label: 'Resting', durationDays: 0.5, progressDays: 0 };
+
+    // Pass delta = 1.5s so gameDays = (1.5 * 0.5) / 1.5 = 0.5 days
+    updateStats(stats, 1.5, 0, barrenBiome, undefined, false, 28, 'shelter');
+
+    expect(stats.warmth).toBeCloseTo(82, 0);
+  });
+
+  it('still loses warmth in the cold when resting without shelter or fire', () => {
+    const stats = createStats();
+    stats.daysTraveled = 20 / 24;
+    stats.warmth = 80;
+    stats.activeAction = { id: 'rest', label: 'Resting', durationDays: 0.5, progressDays: 0 };
+
+    updateStats(stats, 1.5, 0, barrenBiome, undefined, false, 28, false);
+
+    expect(stats.warmth).toBeLessThan(80);
   });
 });
 

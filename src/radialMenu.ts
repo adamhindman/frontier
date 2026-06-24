@@ -143,10 +143,9 @@ export function createRadialMenu(
     const level: MenuLevel = { div: levelDiv, btns: [], ring, items, openedBy, expandedChild: -1 };
     const btnsForAnim: HTMLDivElement[] = [];
 
-    const arcSpan  = items.length === 1 ? 0 : Math.PI * 5 / 3; // 300° arc, starting at top
-    const arcStart = -Math.PI / 2;                               // item 1 at 12 o'clock
+    const arcStart = -Math.PI / 2; // item 1 at 12 o'clock
     for (let i = 0; i < items.length; i++) {
-      const angle = items.length === 1 ? -Math.PI / 2 : arcStart + (i / (items.length - 1)) * arcSpan;
+      const angle = arcStart + (i / items.length) * Math.PI * 2;
       const bx    = cx + Math.cos(angle) * RADIUS;
       const by    = cy + Math.sin(angle) * RADIUS;
       const item  = items[i];
