@@ -1,5 +1,5 @@
 import type { PlayerStats } from './playerStats';
-import { getMoraleLabel, getMoraleEmoji } from './playerStats';
+import { getMoraleLabel, getMoraleEmoji, getWarmthLabel } from './playerStats';
 import { CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
 
 function formatTime(daysFractional: number): string {
@@ -78,7 +78,7 @@ function getBandHeight(): number {
   return 44; // pillarboxed fallback: thin overlay on the game edges
 }
 
-export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?: () => void): (stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging?: boolean) => void {
+export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?: () => void, onTogglePause?: () => void): (stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging?: boolean, weatherStr?: string, isPaused?: boolean) => void {
   // ── Top bar ────────────────────────────────────────────────────────────
   const topBar = document.createElement('div');
   topBar.style.cssText = `
@@ -94,6 +94,7 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
   const dayEl        = document.createElement('span');
   const milesEl      = document.createElement('span');
   const tempEl       = document.createElement('span');
+  const weatherEl    = document.createElement('span');
   const actionEl     = document.createElement('span');
   const conditionsEl = document.createElement('span');
 
@@ -120,14 +121,34 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
   stopBtn.addEventListener('mouseleave', () => { stopBtn.style.color = '#c09060'; stopBtn.style.borderColor = 'rgba(255,255,255,0.15)'; });
   if (onStopAction) stopBtn.addEventListener('click', onStopAction);
 
-  tempEl.style.cssText = 'color: #90aacc; font: 11px monospace;';
-  topBar.append(clockEl, dayEl, milesEl, tempEl, actionEl, stopBtn, conditionsEl);
+  tempEl.style.cssText    = 'color: #90aacc; font: 11px monospace;';
+  weatherEl.style.cssText = 'color: #88aacc; font: 11px monospace;';
+  topBar.append(clockEl, dayEl, milesEl, tempEl, weatherEl, actionEl, stopBtn, conditionsEl);
 
-  // ── Seed display (top-right) ───────────────────────────────────────────
+  // ── Top-right controls ────────────────────────────────────────────────
+  const rightWrap = document.createElement('div');
+  rightWrap.style.cssText = 'margin-left: auto; display: flex; align-items: center; gap: 10px; flex-shrink: 0;';
+
+  const pauseBtn = document.createElement('button');
+  pauseBtn.title = 'Pause (P)';
+  pauseBtn.textContent = '⏸';
+  pauseBtn.style.cssText = `
+    background: none;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    color: #666;
+    font: 13px monospace;
+    line-height: 1;
+    padding: 2px 6px;
+    cursor: pointer;
+    pointer-events: auto;
+  `;
+  pauseBtn.addEventListener('mouseenter', () => { pauseBtn.style.color = '#bbb'; pauseBtn.style.borderColor = 'rgba(255,255,255,0.3)'; });
+  pauseBtn.addEventListener('mouseleave', () => { pauseBtn.style.color = '#666'; pauseBtn.style.borderColor = 'rgba(255,255,255,0.12)'; });
+  if (onTogglePause) pauseBtn.addEventListener('click', onTogglePause);
+  rightWrap.appendChild(pauseBtn);
+
   if (seed !== undefined) {
-    const seedWrap = document.createElement('div');
-    seedWrap.style.cssText = 'margin-left: auto; display: flex; align-items: center; gap: 10px; flex-shrink: 0;';
-
     const seedLabel = document.createElement('span');
     seedLabel.textContent = seed;
     seedLabel.style.cssText = 'color: #555; font: 11px monospace; letter-spacing: 0.03em;';
@@ -155,9 +176,10 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
       window.location.href = url.toString();
     });
 
-    seedWrap.append(seedLabel, newWorldBtn);
-    topBar.appendChild(seedWrap);
+    rightWrap.append(seedLabel, newWorldBtn);
   }
+
+  topBar.appendChild(rightWrap);
 
   // ── Bottom bar ─────────────────────────────────────────────────────────
   const bottomBar = document.createElement('div');
@@ -189,8 +211,12 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
   const energyWidget = makeStatWidget('Energy');
   energyWidget.iconWrap.textContent = '⚡';
 
-  const tempWidget = makeStatWidget('Temp');
+  const tempWidget = makeStatWidget('Warmth');
   tempWidget.iconWrap.textContent = '🌡️';
+  tempWidget.iconWrap.style.position = 'relative';
+  const warmthArrowEl = document.createElement('span');
+  warmthArrowEl.style.cssText = 'position:absolute;top:2px;right:3px;font:9px/1 monospace;font-weight:bold;';
+  tempWidget.iconWrap.appendChild(warmthArrowEl);
 
   const foodWidget = makeStatWidget('Food');
   foodWidget.iconWrap.textContent = '🍖';
@@ -237,7 +263,10 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
   window.addEventListener('resize', layout);
 
   // ── Update (called every frame) ────────────────────────────────────────
-  return function updateHud(stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging = false) {
+  let prevWarmth = -1;
+  return function updateHud(stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging = false, weatherStr?: string, isPaused = false) {
+    pauseBtn.textContent = isPaused ? '▶' : '⏸';
+    pauseBtn.title = isPaused ? 'Resume (P)' : 'Pause (P)';
     clockEl.style.opacity = timeTicking ? '1' : '0';
     dayEl.textContent     = formatTime(stats.daysTraveled);
     milesEl.textContent   = `· ${distanceStr}`;
@@ -262,7 +291,21 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
 
     healthWidget.bottom.textContent   = String(Math.round(stats.health));
     energyWidget.bottom.textContent   = String(Math.round(stats.energy));
-    tempWidget.bottom.textContent     = String(Math.round(stats.bodyTemp ?? 100));
+    tempWidget.bottom.textContent = getWarmthLabel(stats.warmth);
+    if (prevWarmth >= 0) {
+      const delta = stats.warmth - prevWarmth;
+      if (delta > 0.02) {
+        warmthArrowEl.textContent = '▲';
+        warmthArrowEl.style.color = '#5c5';
+      } else if (delta < -0.02) {
+        warmthArrowEl.textContent = '▼';
+        warmthArrowEl.style.color = '#c55';
+      } else {
+        warmthArrowEl.textContent = '';
+      }
+    }
+    prevWarmth = stats.warmth;
+    weatherEl.textContent             = weatherStr ? `· ${weatherStr}` : '';
     foodWidget.bottom.textContent     = `${stats.food.toFixed(1)} lbs`;
     waterWidget.bottom.textContent    = `${stats.water.toFixed(1)} gal`;
     moraleWidget.iconWrap.textContent = getMoraleEmoji(stats.morale);

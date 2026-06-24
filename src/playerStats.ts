@@ -1,4 +1,6 @@
 import type { BiomeProperties } from "./biomes";
+import type { WeatherEffects } from "./weather";
+export type { WeatherEffects } from "./weather";
 
 export interface StatusCondition {
   id: string;
@@ -27,7 +29,7 @@ export interface PlayerStats {
   canoes: number; // completed canoes in inventory
   morale: number; // 0–100 (displayed as emoji face)
   energy: number; // 0–100
-  bodyTemp: number; // 0–100; drops in cold, restored by campfire/shelter
+  warmth: number; // 0–100; drops in cold, restored by campfire/shelter
   milesTraveled: number;
   daysTraveled: number;
   daysTraveledSinceRest: number; // resets when a ≥1-day rest completes
@@ -35,8 +37,8 @@ export interface PlayerStats {
   activeAction: ActiveAction | null;
 }
 
-export const SECONDS_PER_DAY    = 60;
-export const MILES_PER_TILE     = 0.1;
+export const SECONDS_PER_DAY    = 120;
+export const MILES_PER_TILE     = 0.05;
 export const FOOD_CAPACITY_LBS  = 30;
 export const WATER_CAPACITY_GAL = 10;
 export const MINERALS_CAPACITY  = 50;
@@ -56,12 +58,13 @@ const PASSIVE_WATER_AMOUNT_PER_RES = 0.07;
 
 const PASSIVE_FOOD_EMOJIS = ['🌿', '🫐', '🌰', '🍓'] as const;
 
-// Active forage: per resource unit per in-game hour rolled
-const FORAGE_PLANTS_FACTOR  = 0.30;
-const FORAGE_WATER_FACTOR   = 0.40;
-const FORAGE_GAME_FACTOR    = 0.50;
-const HARVEST_TIMBER_FACTOR   = 0.80;
-const HARVEST_MINERALS_FACTOR = 0.60;
+// Active forage: ticks happen FORAGE_TICKS_PER_HOUR times per in-game hour;
+// per-tick amounts are divided by the same constant so hourly totals stay identical.
+const FORAGE_TICKS_PER_HOUR = 4; // tick every 15 game-minutes (~1.25 real seconds)
+const FORAGE_PLANTS_FACTOR  = 0.30 / FORAGE_TICKS_PER_HOUR;
+const FORAGE_WATER_FACTOR   = 0.40 / FORAGE_TICKS_PER_HOUR;
+const FORAGE_GAME_FACTOR    = 0.50 / FORAGE_TICKS_PER_HOUR;
+const HARVEST_TIMBER_FACTOR = 0.80 / FORAGE_TICKS_PER_HOUR;
 
 export type ForageEvent = { emoji: string; timber?: number };
 
@@ -80,6 +83,21 @@ const MORALE_LEVELS = [
   { min: 61, emoji: '🙂', label: 'Resolute' },
   { min: 81, emoji: '😄', label: 'Elated'   },
 ] as const;
+
+const WARMTH_LEVELS = [
+  { min: 0,  label: 'Freezing'    },
+  { min: 21, label: 'Cold'        },
+  { min: 41, label: 'Chilled'     },
+  { min: 61, label: 'Comfortable' },
+  { min: 81, label: 'Warm'        },
+] as const;
+
+export function getWarmthLabel(warmth: number): string {
+  for (let i = WARMTH_LEVELS.length - 1; i >= 0; i--) {
+    if (warmth >= WARMTH_LEVELS[i].min) return WARMTH_LEVELS[i].label;
+  }
+  return WARMTH_LEVELS[0].label;
+}
 
 export function getMoraleLabel(morale: number): string {
   for (let i = MORALE_LEVELS.length - 1; i >= 0; i--) {
@@ -123,7 +141,7 @@ export function createStats(): PlayerStats {
     canoes: 1,
     morale: 100,
     energy: 100,
-    bodyTemp: 100,
+    warmth: 100,
     milesTraveled: 0,
     daysTraveled: 9 / 24,
     daysTraveledSinceRest: 0,
@@ -139,17 +157,10 @@ export function getWeightMultiplier(stats: PlayerStats): number {
 }
 
 // Returns time-tick flag and any forage events that fired this frame.
-// Max drain rate for body temperature (points per game-day at 0 °F ambient).
-// At 0°F, body temp drops from 100 → 0 in ~4 game-hours.
-const BODY_TEMP_DRAIN_PER_DAY_MAX    = 300;
-// Max restore rate from warm air alone (points per game-day at peak warmth).
-const BODY_TEMP_RESTORE_PER_DAY_MAX  = 40;
-// Ambient °F at which body temp is neutral — no drain, no passive restore.
-const BODY_TEMP_COMFORT_F = 65;
-// Max health drain from cold (per game-day at bodyTemp = 0).
-// Calibrated so bodyTemp = 25 → ~50 health lost per game-hour (1200/day).
-// Formula: drain = (100 - bodyTemp) / 100 * MAX  →  MAX = 1600.
-const BODY_TEMP_HEALTH_DRAIN_PER_DAY = 800;
+const WARMTH_DRAIN_PER_DAY_MAX    = 450;
+const WARMTH_RESTORE_PER_DAY_MAX  = 60;
+const WARMTH_COMFORT_F            = 65;
+const WARMTH_HEALTH_DRAIN_PER_DAY = 800;
 
 export function updateStats(
   stats: PlayerStats,
@@ -159,10 +170,11 @@ export function updateStats(
   fishBiome?: BiomeProperties,
   inCanoe = false,
   ambientTempF = 70,
-  warming = false,
+  warming: 'campfire' | 'shelter' | false = false,
+  weatherEffects?: WeatherEffects,
 ): { timeTicking: boolean; forageEvents: ForageEvent[] } {
   const isMoving = tilesMoved > MOVE_THRESHOLD;
-  const timeTicking = isMoving || stats.activeAction !== null;
+  const timeTicking = true; // clock runs continuously; callers pass delta=0 to pause
   const forageEvents: ForageEvent[] = [];
 
   stats.milesTraveled += tilesMoved * MILES_PER_TILE;
@@ -194,28 +206,37 @@ export function updateStats(
 
     let gameDays = delta / SECONDS_PER_DAY;
 
-    // Body temperature changes only while the clock is ticking.
-    if (warming) {
-      stats.bodyTemp = 100;
-    } else if (ambientTempF < BODY_TEMP_COMFORT_F) {
-      // Cold air drains body temp proportional to how far below comfort threshold.
-      const coldFactor = (BODY_TEMP_COMFORT_F - ambientTempF) / BODY_TEMP_COMFORT_F;
-      stats.bodyTemp = Math.max(0, stats.bodyTemp - gameDays * coldFactor * BODY_TEMP_DRAIN_PER_DAY_MAX);
-    } else {
-      // Warm air gradually restores body temp; rate scales with how warm it is above comfort.
-      const warmFactor = Math.min(1, (ambientTempF - BODY_TEMP_COMFORT_F) / 35);
-      stats.bodyTemp = Math.min(100, stats.bodyTemp + gameDays * warmFactor * BODY_TEMP_RESTORE_PER_DAY_MAX);
-    }
-    if (stats.bodyTemp < 50) {
-      const coldSeverity = (50 - stats.bodyTemp) / 50;
-      stats.health = Math.max(0, stats.health - gameDays * coldSeverity * BODY_TEMP_HEALTH_DRAIN_PER_DAY);
-    }
-
     if (stats.activeAction?.id === "rest") {
       // Speed time up so rest completes in roughly max(min(durationDays, 5), 1) real seconds.
       const totalDays = stats.activeAction.durationDays;
       const realSecs = Math.max(Math.min(totalDays, 5), 1) * 1.5;
       gameDays = (delta * totalDays) / realSecs;
+    }
+
+    // Warmth changes only while the clock is ticking.
+    if (warming === 'campfire') {
+      // Fire adds warmth but cold air and weather still drain — severe cold/blizzard overwhelms a campfire
+      const coldFactor = ambientTempF < WARMTH_COMFORT_F
+        ? (WARMTH_COMFORT_F - ambientTempF) / WARMTH_COMFORT_F
+        : 0;
+      const drain = gameDays * coldFactor * WARMTH_DRAIN_PER_DAY_MAX * (weatherEffects?.warmthDrainMult ?? 1);
+      const gain  = gameDays * WARMTH_RESTORE_PER_DAY_MAX * 10; // campfire provides strong boost
+      stats.warmth = Math.min(90, Math.max(0, stats.warmth - drain + gain));
+    } else if (warming === 'shelter') {
+      // Shelter blocks all outside cold — warmth drifts toward 82 regardless of weather
+      stats.warmth = Math.min(82, stats.warmth + gameDays * WARMTH_RESTORE_PER_DAY_MAX * 4);
+    } else if (ambientTempF < WARMTH_COMFORT_F) {
+      const coldFactor = (WARMTH_COMFORT_F - ambientTempF) / WARMTH_COMFORT_F;
+      const drainMult  = weatherEffects?.warmthDrainMult ?? 1;
+      stats.warmth = Math.max(0, stats.warmth - gameDays * coldFactor * WARMTH_DRAIN_PER_DAY_MAX * drainMult);
+    } else {
+      const warmFactor = Math.min(1, (ambientTempF - WARMTH_COMFORT_F) / 35);
+      stats.warmth = Math.min(100, stats.warmth + gameDays * warmFactor * WARMTH_RESTORE_PER_DAY_MAX);
+    }
+    // Shelter protects from cold health drain — warmth recovers at its own pace inside.
+    if (stats.warmth < 50 && warming !== 'shelter') {
+      const coldSeverity = (50 - stats.warmth) / 50;
+      stats.health = Math.max(0, stats.health - gameDays * coldSeverity * WARMTH_HEALTH_DRAIN_PER_DAY);
     }
 
     stats.daysTraveled += gameDays;
@@ -235,6 +256,7 @@ export function updateStats(
     if (stats.daysTraveledSinceRest > 0.5) {
       moraleDrainPerDay += Math.min((stats.daysTraveledSinceRest - 0.5) * 2, 8);
     }
+    if (warming !== 'shelter') moraleDrainPerDay += weatherEffects?.moraleDrainPerDay ?? 0;
     stats.morale = Math.max(0, stats.morale - gameDays * moraleDrainPerDay);
 
     // Health drains when any critical stat is depleted
@@ -261,7 +283,7 @@ export function updateStats(
 
     // Regeneration when well-supplied: health recovers proportional to morale,
     // morale recovers proportional to health.
-    if (stats.food > 0 && stats.water > 0 && stats.energy > 0) {
+    if (stats.food > 0 && stats.water > 0 && stats.energy > 0 && stats.health > 0) {
       if (stats.health < 100)
         stats.health = Math.min(100, stats.health + gameDays * (0.2 + 0.8 * stats.morale / 100) * HEALTH_REGEN_PER_DAY_MAX);
       if (stats.morale < 100)
@@ -293,9 +315,9 @@ export function updateStats(
           stats.water  = Math.max(0, stats.water  - gameDays * FORAGE_WATER_DRAIN_PER_DAY);
           stats.energy = Math.min(100, stats.energy + gameDays * FORAGE_ENERGY_GAIN_PER_DAY);
 
-          // Roll once per elapsed in-game hour
-          const hoursBefore = Math.floor((stats.activeAction.progressDays - gameDays) * 24);
-          const hoursNow    = Math.floor(stats.activeAction.progressDays * 24);
+          // Roll FORAGE_TICKS_PER_HOUR times per in-game hour
+          const hoursBefore = Math.floor((stats.activeAction.progressDays - gameDays) * 24 * FORAGE_TICKS_PER_HOUR);
+          const hoursNow    = Math.floor(stats.activeAction.progressDays * 24 * FORAGE_TICKS_PER_HOUR);
           if (hoursNow > hoursBefore) {
             const waterRatio = stats.water / WATER_CAPACITY_GAL;
             const foodRatio  = stats.food  / FOOD_CAPACITY_LBS;
@@ -303,23 +325,23 @@ export function updateStats(
             const needFood   = stats.food  < FOOD_CAPACITY_LBS;
 
             // Gather the most-needed resource first; gather both if both needed
+            const forageMult = weatherEffects?.forageMult ?? 1;
             const gatherFood = () => {
               if (!needFood) return;
               if (fishBiome) {
-                // Near water — fish
-                stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * fishBiome.baseResources.game * FORAGE_GAME_FACTOR);
+                stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * fishBiome.baseResources.game * FORAGE_GAME_FACTOR * forageMult);
                 forageEvents.push({ emoji: '🐟' });
               } else if (biome.baseResources.game * FORAGE_GAME_FACTOR >= biome.baseResources.plants * FORAGE_PLANTS_FACTOR) {
-                stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * biome.baseResources.game * FORAGE_GAME_FACTOR);
+                stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * biome.baseResources.game * FORAGE_GAME_FACTOR * forageMult);
                 forageEvents.push({ emoji: '🍖' });
               } else {
-                stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * biome.baseResources.plants * FORAGE_PLANTS_FACTOR);
+                stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * biome.baseResources.plants * FORAGE_PLANTS_FACTOR * forageMult);
                 forageEvents.push({ emoji: '🌿' });
               }
             };
             const gatherWater = () => {
               if (!needWater) return;
-              stats.water = Math.min(WATER_CAPACITY_GAL, stats.water + Math.random() * biome.baseResources.water * FORAGE_WATER_FACTOR);
+              stats.water = Math.min(WATER_CAPACITY_GAL, stats.water + Math.random() * biome.baseResources.water * FORAGE_WATER_FACTOR * forageMult);
               forageEvents.push({ emoji: '💧' });
             };
 
@@ -351,22 +373,11 @@ export function updateStats(
         }
       } else if (stats.activeAction.id === 'harvest_timber') {
         // Timber can be chopped at night.
-        const hoursBefore = Math.floor((stats.activeAction.progressDays - gameDays) * 24);
-        const hoursNow    = Math.floor(stats.activeAction.progressDays * 24);
+        const hoursBefore = Math.floor((stats.activeAction.progressDays - gameDays) * 24 * FORAGE_TICKS_PER_HOUR);
+        const hoursNow    = Math.floor(stats.activeAction.progressDays * 24 * FORAGE_TICKS_PER_HOUR);
         if (hoursNow > hoursBefore) {
           const gained = Math.random() * biome.baseResources.timber * HARVEST_TIMBER_FACTOR;
           forageEvents.push({ emoji: '🪵', timber: gained });
-        }
-      } else if (stats.activeAction.id === 'harvest_minerals') {
-        if (!isDaylight(stats.daysTraveled)) {
-          stats.activeAction = null;
-        } else {
-          const hoursBefore = Math.floor((stats.activeAction.progressDays - gameDays) * 24);
-          const hoursNow    = Math.floor(stats.activeAction.progressDays * 24);
-          if (hoursNow > hoursBefore && stats.minerals < MINERALS_CAPACITY) {
-            stats.minerals = Math.min(MINERALS_CAPACITY, stats.minerals + Math.random() * biome.baseResources.minerals * HARVEST_MINERALS_FACTOR);
-            forageEvents.push({ emoji: '🪨' });
-          }
         }
       }
     }

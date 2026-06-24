@@ -12,12 +12,12 @@ interface StructureConfig {
 }
 
 export const CANOE_TIMBER_COST     = 10;
-export const SHELTER_TIMBER_COST   = 25;
+export const SHELTER_TIMBER_COST   = 8;
 export const CAMPFIRE_TIMBER_COST  = 0;
 
 export const STRUCTURE_CONFIGS: Record<StructureType, StructureConfig> = {
   canoe:    { emoji: '🛶', totalHours: 24, label: 'Canoe',     timberCost: CANOE_TIMBER_COST    },
-  shelter:  { emoji: '🛖', totalHours: 8,  label: 'Shelter',   timberCost: SHELTER_TIMBER_COST  },
+  shelter:  { emoji: '🛖', totalHours: 3,  label: 'Shelter',   timberCost: SHELTER_TIMBER_COST  },
   campfire: { emoji: '🔥', totalHours: 1,  label: 'Campfire',  timberCost: CAMPFIRE_TIMBER_COST },
 };
 
@@ -233,6 +233,17 @@ export class StructureManager {
     s.el.remove();
     s.tooltipEl.remove();
     this.slots[index] = null;
+  }
+
+  hasStructureAt(tileX: number, tileY: number): boolean {
+    return this.slots.some(s => s !== null && s.tileX === tileX && s.tileY === tileY);
+  }
+
+  playerInCompletedShelter(tileX: number, tileY: number): boolean {
+    for (const s of this.slots) {
+      if (s && s.complete && s.type === 'shelter' && s.tileX === tileX && s.tileY === tileY) return true;
+    }
+    return false;
   }
 
   // Returns true when the player's tile is warmed by a nearby campfire or enclosing shelter.
