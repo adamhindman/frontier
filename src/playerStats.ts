@@ -68,11 +68,11 @@ const HARVEST_TIMBER_FACTOR = 0.80 / FORAGE_TICKS_PER_HOUR;
 
 export type ForageEvent = { emoji: string; timber?: number };
 
-const REST_FOOD_DRAIN_PER_DAY   = 6;  // lbs/day
+const REST_FOOD_DRAIN_PER_DAY   = 2;  // lbs/day
 const REST_WATER_DRAIN_PER_DAY  = 4;  // gal/day
 const REST_ENERGY_GAIN_PER_DAY  = 25;
 
-const FORAGE_FOOD_DRAIN_PER_DAY    = 2.5; // lbs/day — light work
+const FORAGE_FOOD_DRAIN_PER_DAY    = 1.0; // lbs/day — light work
 const FORAGE_WATER_DRAIN_PER_DAY   = 0.75; // gal/day
 const FORAGE_ENERGY_GAIN_PER_DAY   = 8;   // /day — lighter than rest (25/day) but still restorative
 
@@ -88,7 +88,7 @@ const WARMTH_LEVELS = [
   { min: 0,  label: 'Freezing'    },
   { min: 21, label: 'Cold'        },
   { min: 41, label: 'Chilled'     },
-  { min: 61, label: 'Comfortable' },
+  { min: 61, label: 'Comfy' },
   { min: 81, label: 'Warm'        },
 ] as const;
 
@@ -206,11 +206,14 @@ export function updateStats(
 
     let gameDays = delta / SECONDS_PER_DAY;
 
-    if (stats.activeAction?.id === "rest") {
+    if (stats.activeAction?.id === "rest" && stats.warmth >= 50) {
       // Speed time up so rest completes in roughly max(min(durationDays, 5), 1) real seconds.
+      // Drops to real-time when warmth falls below 50 so the player notices freezing.
       const totalDays = stats.activeAction.durationDays;
       const realSecs = Math.max(Math.min(totalDays, 5), 1) * 1.5;
       gameDays = (delta * totalDays) / realSecs;
+    } else if (stats.activeAction?.id === 'build_canoe') {
+      gameDays *= 4;
     }
 
     // Warmth changes only while the clock is ticking.
@@ -247,14 +250,15 @@ export function updateStats(
     // Morale drains from poor conditions; recovers naturally when well-supplied.
     // Conditions use thresholds so they kick in before stats hit 0.
     let moraleDrainPerDay = 0;
-    if (isMoving) moraleDrainPerDay += 2; // baseline travel grind
-    if (stats.food < 5) moraleDrainPerDay += 10; // nearly out of food
-    if (stats.water < 1) moraleDrainPerDay += 15; // nearly out of water
-    if (stats.health < 50) moraleDrainPerDay += 6; // injured
-    if (stats.energy < 30) moraleDrainPerDay += 8; // exhausted
-    // Travel fatigue: ramps up after 0.5 days without a full rest (caps at +8/day)
+    if (isMoving) moraleDrainPerDay += 4;  // baseline travel grind
+    if (stats.food < 5) moraleDrainPerDay += 18;  // nearly out of food
+    if (stats.water < 1) moraleDrainPerDay += 25; // nearly out of water
+    // Health below 100 continuously drains morale, scaling with severity
+    moraleDrainPerDay += (1 - stats.health / 100) * 20;
+    if (stats.energy < 30) moraleDrainPerDay += 14; // exhausted
+    // Travel fatigue: ramps up after 0.5 days without a full rest (caps at +12/day)
     if (stats.daysTraveledSinceRest > 0.5) {
-      moraleDrainPerDay += Math.min((stats.daysTraveledSinceRest - 0.5) * 2, 8);
+      moraleDrainPerDay += Math.min((stats.daysTraveledSinceRest - 0.5) * 3, 12);
     }
     if (warming !== 'shelter') moraleDrainPerDay += weatherEffects?.moraleDrainPerDay ?? 0;
     stats.morale = Math.max(0, stats.morale - gameDays * moraleDrainPerDay);
@@ -282,12 +286,13 @@ export function updateStats(
       );
 
     // Regeneration when well-supplied: health recovers proportional to morale,
-    // morale recovers proportional to health.
+    // morale recovers proportional to health. Shelter while resting multiplies both.
+    const shelterRestBonus = (warming === 'shelter' && stats.activeAction?.id === 'rest') ? 3 : 1;
     if (stats.food > 0 && stats.water > 0 && stats.energy > 0 && stats.health > 0) {
       if (stats.health < 100)
-        stats.health = Math.min(100, stats.health + gameDays * (0.2 + 0.8 * stats.morale / 100) * HEALTH_REGEN_PER_DAY_MAX);
+        stats.health = Math.min(100, stats.health + gameDays * HEALTH_REGEN_PER_DAY_MAX * shelterRestBonus);
       if (stats.morale < 100)
-        stats.morale = Math.min(100, stats.morale + gameDays * (0.2 + 0.8 * stats.health / 100) * MORALE_REGEN_PER_DAY_MAX);
+        stats.morale = Math.min(100, stats.morale + gameDays * (0.2 + 0.8 * stats.health / 100) * MORALE_REGEN_PER_DAY_MAX * shelterRestBonus);
     }
 
     if (stats.activeAction) {

@@ -19,7 +19,8 @@ function getContentRect(canvas: HTMLCanvasElement) {
 }
 
 // Search rings for pile placement: radius 1 first, then radius 2 if all water.
-const PLACE_OFFSETS_R1 = [[0,1],[1,0],[-1,0],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1],[0,0]] as const;
+// Never place on [0,0] — that's the player/structure tile itself.
+const PLACE_OFFSETS_R1 = [[0,1],[1,0],[-1,0],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]] as const;
 const PLACE_OFFSETS_R2 = [
   [0,2],[2,0],[-2,0],[0,-2],
   [1,2],[-1,2],[2,1],[2,-1],[-1,-2],[1,-2],[-2,1],[-2,-1],
@@ -38,18 +39,23 @@ export class TimberPileManager {
 
   // Add timber near a position. Merges with existing adjacent pile or places a new one
   // on the nearest non-water tile, searching radius 1 then radius 2.
-  addAmount(nearTileX: number, nearTileY: number, amount: number, isWater?: (tx: number, ty: number) => boolean) {
-    const existing = this.piles.find(p =>
-      Math.abs(p.tileX - nearTileX) <= 1 && Math.abs(p.tileY - nearTileY) <= 1
-    );
+  addAmount(nearTileX: number, nearTileY: number, amount: number, isWater?: (tx: number, ty: number) => boolean, isOccupied?: (tx: number, ty: number) => boolean) {
+    const existing = this.piles.find(p => {
+      const dx = Math.abs(p.tileX - nearTileX);
+      const dy = Math.abs(p.tileY - nearTileY);
+      return (dx > 0 || dy > 0) && dx <= 1 && dy <= 1;
+    });
     if (existing) {
       existing.amount += amount;
       this.updateTooltip(existing);
       return;
     }
-    const isLand = (dx: number, dy: number) => !isWater?.(nearTileX + dx, nearTileY + dy);
-    const r1 = PLACE_OFFSETS_R1.find(([dx, dy]) => isLand(dx, dy));
-    const r2 = r1 ?? PLACE_OFFSETS_R2.find(([dx, dy]) => isLand(dx, dy));
+    const canPlace = (dx: number, dy: number) => {
+      const tx = nearTileX + dx, ty = nearTileY + dy;
+      return !isWater?.(tx, ty) && !isOccupied?.(tx, ty);
+    };
+    const r1 = PLACE_OFFSETS_R1.find(([dx, dy]) => canPlace(dx, dy));
+    const r2 = r1 ?? PLACE_OFFSETS_R2.find(([dx, dy]) => canPlace(dx, dy));
     const [ox, oy] = r2 ?? [0, 1];
     this.createPile(nearTileX + ox, nearTileY + oy, amount);
   }
