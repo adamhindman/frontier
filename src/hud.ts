@@ -67,39 +67,34 @@ function makeStatWidget(topLabel: string) {
   return { el, iconWrap, bottom };
 }
 
-// Returns the height of the top/bottom letterbox bands in CSS pixels.
-// Falls back to a small overlay height if the screen is pillarboxed instead.
-function getBandHeight(): number {
-  const screenAspect = window.innerWidth / window.innerHeight;
-  const canvasAspect = CANVAS_WIDTH / CANVAS_HEIGHT;
-  if (screenAspect <= canvasAspect) {
-    return Math.max(0, (window.innerHeight - window.innerWidth / canvasAspect) / 2);
-  }
-  return 44; // pillarboxed fallback: thin overlay on the game edges
+// Total vertical space consumed by both bands combined.
+function totalBandSpace(): number {
+  const sa = window.innerWidth / window.innerHeight;
+  const ca = CANVAS_WIDTH / CANVAS_HEIGHT;
+  if (sa <= ca) return Math.max(0, window.innerHeight - window.innerWidth / ca);
+  return 88; // pillarboxed fallback
 }
 
-export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?: () => void, onTogglePause?: () => void): (stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging?: boolean, weatherStr?: string, isPaused?: boolean) => void {
+// 25 % top / 75 % bottom split.
+export function getTopBandHeight():    number { return Math.round(totalBandSpace() * 0.25); }
+export function getBottomBandHeight(): number { return totalBandSpace() - getTopBandHeight(); }
+
+export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?: () => void, onTogglePause?: () => void, onToggleQuests?: () => void, onQuestHover?: { enter: () => void; leave: () => void }): (stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging?: boolean, weatherStr?: string, isPaused?: boolean) => void {
   // ── Top bar ────────────────────────────────────────────────────────────
   const topBar = document.createElement('div');
   topBar.style.cssText = `
     position: fixed; top: 0; left: 0; right: 0;
     display: flex; align-items: center; gap: 18px;
     padding: 0 24px;
+    background: #000;
     color: #bbb; font: 13px/1 monospace;
     pointer-events: none; z-index: 1000; box-sizing: border-box;
   `;
   document.body.appendChild(topBar);
 
-  const clockEl      = document.createElement('span');
-  const dayEl        = document.createElement('span');
-  const milesEl      = document.createElement('span');
-  const tempEl       = document.createElement('span');
-  const weatherEl    = document.createElement('span');
   const actionEl     = document.createElement('span');
   const conditionsEl = document.createElement('span');
 
-  clockEl.textContent      = '⏱';
-  clockEl.style.cssText    = 'opacity: 0; transition: opacity 0.4s ease; font-size: 15px;';
   actionEl.style.color     = '#90b8d0';
   conditionsEl.style.color = '#d08050';
 
@@ -121,9 +116,7 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
   stopBtn.addEventListener('mouseleave', () => { stopBtn.style.color = '#c09060'; stopBtn.style.borderColor = 'rgba(255,255,255,0.15)'; });
   if (onStopAction) stopBtn.addEventListener('click', onStopAction);
 
-  tempEl.style.cssText    = 'color: #90aacc; font: 11px monospace;';
-  weatherEl.style.cssText = 'color: #88aacc; font: 11px monospace;';
-  topBar.append(clockEl, dayEl, milesEl, tempEl, weatherEl, actionEl, stopBtn, conditionsEl);
+  topBar.append(actionEl, stopBtn, conditionsEl);
 
   // ── Top-right controls ────────────────────────────────────────────────
   const rightWrap = document.createElement('div');
@@ -146,7 +139,30 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
   pauseBtn.addEventListener('mouseenter', () => { pauseBtn.style.color = '#bbb'; pauseBtn.style.borderColor = 'rgba(255,255,255,0.3)'; });
   pauseBtn.addEventListener('mouseleave', () => { pauseBtn.style.color = '#666'; pauseBtn.style.borderColor = 'rgba(255,255,255,0.12)'; });
   if (onTogglePause) pauseBtn.addEventListener('click', onTogglePause);
-  rightWrap.appendChild(pauseBtn);
+
+  const questBtn = document.createElement('button');
+  questBtn.title = 'Quests (Q)';
+  questBtn.textContent = '📜';
+  questBtn.style.cssText = `
+    background: none;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    color: #666;
+    font: 13px monospace;
+    line-height: 1;
+    padding: 2px 6px;
+    cursor: pointer;
+    pointer-events: auto;
+  `;
+  questBtn.addEventListener('mouseenter', () => { questBtn.style.color = '#bbb'; questBtn.style.borderColor = 'rgba(255,255,255,0.3)'; });
+  questBtn.addEventListener('mouseleave', () => { questBtn.style.color = '#666'; questBtn.style.borderColor = 'rgba(255,255,255,0.12)'; });
+  if (onToggleQuests) questBtn.addEventListener('click', onToggleQuests);
+  if (onQuestHover) {
+    questBtn.addEventListener('mouseenter', onQuestHover.enter);
+    questBtn.addEventListener('mouseleave', onQuestHover.leave);
+  }
+
+  rightWrap.append(questBtn, pauseBtn);
 
   if (seed !== undefined) {
     const seedLabel = document.createElement('span');
@@ -187,6 +203,7 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
     position: fixed; bottom: 0; left: 0; right: 0;
     display: flex; align-items: center;
     padding: 0 28px;
+    background: #000;
     pointer-events: none; z-index: 1000; box-sizing: border-box;
   `;
   document.body.appendChild(bottomBar);
@@ -228,25 +245,66 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
 
   widgetGroup.append(healthWidget.el, energyWidget.el, tempWidget.el, moraleWidget.el, foodWidget.el, waterWidget.el);
 
+  // Left: day/time, distance, temp+weather
+  const leftCol = document.createElement('div');
+  leftCol.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 9px;
+    flex-shrink: 0;
+    pointer-events: none;
+  `;
+
+  const dayEl     = document.createElement('span');
+  const milesEl   = document.createElement('span');
+  const tempRowEl = document.createElement('span');
+
+  dayEl.style.cssText     = 'color: #aaa; font: 14px/1 monospace;';
+  milesEl.style.cssText   = 'color: #888; font: 11px/1 monospace;';
+  tempRowEl.style.cssText = 'color: #888; font: 11px/1 monospace;';
+
+  leftCol.append(dayEl, milesEl, tempRowEl);
+  bottomBar.appendChild(leftCol);
+
   // Right: canoe indicator
   const canoeIndicator = document.createElement('div');
   canoeIndicator.title = 'Drop canoe';
   canoeIndicator.style.cssText = `
     display: none;
+    flex-direction: column;
     align-items: center;
-    gap: 5px;
+    gap: 3px;
     margin-left: auto;
     flex-shrink: 0;
-    font-size: 30px;
-    line-height: 1;
-    color: #ccc;
     cursor: pointer;
     pointer-events: auto;
     opacity: 1;
     transition: opacity 0.12s;
+    width: 58px;
   `;
-  canoeIndicator.innerHTML = '🛶<span style="font: 13px monospace; color: #aaa;"></span>';
-  const canoeCount = canoeIndicator.querySelector('span') as HTMLSpanElement;
+
+  const canoeTopLabel = document.createElement('div');
+  canoeTopLabel.textContent = 'DROP';
+  canoeTopLabel.style.cssText = 'color: #555; font: 11px/1 monospace; letter-spacing: 0.08em;';
+
+  const canoeIconWrap = document.createElement('div');
+  canoeIconWrap.style.cssText = `
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    font-size: 24px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 8px;
+  `;
+  canoeIconWrap.textContent = '🛶';
+
+  const canoeCount = document.createElement('div');
+  canoeCount.style.cssText = 'color: #888; font: 11px/1 monospace; letter-spacing: 0.04em; text-align: center; width: 100%;';
+  canoeCount.textContent = 'Canoe';
+
+  canoeIndicator.append(canoeTopLabel, canoeIconWrap, canoeCount);
   canoeIndicator.addEventListener('mouseenter', () => { canoeIndicator.style.opacity = '0.6'; });
   canoeIndicator.addEventListener('mouseleave', () => { canoeIndicator.style.opacity = '1'; });
   if (onDropCanoe) canoeIndicator.addEventListener('click', onDropCanoe);
@@ -255,9 +313,8 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
 
   // ── Layout: set bar heights to match letterbox bands ───────────────────
   function layout() {
-    const h = `${getBandHeight()}px`;
-    topBar.style.height    = h;
-    bottomBar.style.height = h;
+    topBar.style.height    = `${getTopBandHeight()}px`;
+    bottomBar.style.height = `${getBottomBandHeight()}px`;
   }
   layout();
   window.addEventListener('resize', layout);
@@ -267,10 +324,8 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
   return function updateHud(stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging = false, weatherStr?: string, isPaused = false) {
     pauseBtn.textContent = isPaused ? '▶' : '⏸';
     pauseBtn.title = isPaused ? 'Resume (P)' : 'Pause (P)';
-    clockEl.style.opacity = timeTicking ? '1' : '0';
     dayEl.textContent     = formatTime(stats.daysTraveled);
-    milesEl.textContent   = `· ${distanceStr}`;
-    tempEl.textContent    = `· ${Math.round(ambientTempF)}°F`;
+    milesEl.textContent   = `${distanceStr} from start`;
 
     if (stats.activeAction) {
       if (isFinite(stats.activeAction.durationDays)) {
@@ -289,6 +344,7 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
 
     conditionsEl.textContent = stats.statusConditions.map(c => `! ${c.label}`).join('  ');
 
+    healthWidget.iconWrap.textContent  = stats.health < 50 ? '❤️‍🩹' : '❤️';
     healthWidget.bottom.textContent   = String(Math.round(stats.health));
     energyWidget.bottom.textContent   = String(Math.round(stats.energy));
     tempWidget.bottom.textContent = getWarmthLabel(stats.warmth);
@@ -305,7 +361,7 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
       }
     }
     prevWarmth = stats.warmth;
-    weatherEl.textContent             = weatherStr ? `· ${weatherStr}` : '';
+    tempRowEl.textContent = weatherStr ? `${Math.round(ambientTempF)}°F · ${weatherStr}` : `${Math.round(ambientTempF)}°F`;
     foodWidget.bottom.textContent     = `${stats.food.toFixed(1)} lbs`;
     waterWidget.bottom.textContent    = `${stats.water.toFixed(1)} gal`;
     moraleWidget.iconWrap.textContent = getMoraleEmoji(stats.morale);
@@ -313,7 +369,7 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
 
     if (stats.canoes > 0) {
       canoeIndicator.style.display = 'flex';
-      canoeCount.textContent = stats.canoes > 1 ? ` ×${stats.canoes}` : '';
+      canoeCount.textContent = stats.canoes > 1 ? `×${stats.canoes} Canoes` : 'Canoe';
     } else {
       canoeIndicator.style.display = 'none';
     }

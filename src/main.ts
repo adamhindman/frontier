@@ -5,7 +5,13 @@ import { Player } from './player';
 import { createInputHandler } from './input';
 import { createTileInspector } from './tileInspector';
 import { createStats, updateStats, getWeightMultiplier, isDaylight, MILES_PER_TILE, SECONDS_PER_DAY } from './playerStats';
-import { createHud } from './hud';
+import playerFrontIdleUrl  from './assets/tiles/player-front-idle.png';
+import playerBackIdleUrl   from './assets/tiles/player-back-idle.png';
+import playerRightWalkUrl  from './assets/tiles/player-right-walking.png';
+import playerLeftWalkUrl   from './assets/tiles/player-left-walking.png';
+import canoeRightUrl       from './assets/tiles/canoe-profile-right.png';
+import canoeLeftUrl        from './assets/tiles/canoe-profile-left.png';
+import { createHud, getTopBandHeight, getBottomBandHeight } from './hud';
 import { StructureManager, DroppedCanoeManager, CANOE_TIMBER_COST, SHELTER_TIMBER_COST, CAMPFIRE_TIMBER_COST, STRUCTURE_CONFIGS } from './structures';
 import { TimberPileManager } from './timberPiles';
 import { saveGame, loadGame, deleteSave } from './save';
@@ -15,6 +21,10 @@ import { getBiome, BIOMES, BiomeProperties } from './biomes';
 import { SEED, CANVAS_WIDTH, CANVAS_HEIGHT, TILE_SIZE, CHUNK_WIDTH, CHUNK_HEIGHT, SURVEY_CHUNK_RADIUS, SURVEY_PAN_SPEED } from './constants';
 import { createWeatherSystem, getWeatherEffects, weatherLabel, resolveWeatherForTemp } from './weather';
 import { createWeatherOverlay } from './weatherOverlay';
+import { MapPinManager } from './mapPins';
+import { QuestManager } from './quests';
+import { createQuestPanel } from './questPanel';
+import { RuinSpriteManager } from './ruinSprites';
 
 // --- Scene ---
 const scene = new THREE.Scene();
@@ -29,14 +39,21 @@ const camera = new THREE.OrthographicCamera(-hw, hw, hh, -hh, -10, 10);
 const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
 renderer.domElement.style.cssText = `
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  position: fixed;
+  left: 0; right: 0;
   object-fit: contain;
   image-rendering: pixelated;
 `;
 document.body.appendChild(renderer.domElement);
+
+function layoutCanvas() {
+  const top = getTopBandHeight();
+  const bot = getBottomBandHeight();
+  renderer.domElement.style.top    = `${top}px`;
+  renderer.domElement.style.bottom = `${bot}px`;
+}
+layoutCanvas();
+window.addEventListener('resize', layoutCanvas);
 
 // --- Seed: read from URL param; write it back so reloads preserve it ---
 function resolveSeed(): string {
@@ -58,7 +75,59 @@ const chunkManager = new ChunkManager(scene, elevation, moisture, river);
 // --- Player & input ---
 const player = new Player(scene);
 const input  = createInputHandler();
-const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY) => {
+function capitalizeBiomeName(biome: string): string {
+  return biome.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+const radialMenu = createRadialMenu(renderer.domElement, camera, (clickedTileX, clickedTileY) => {
+  const isSurveying = stats.activeAction?.id === 'survey';
+
+  if (isSurveying) {
+    const existingPin = mapPins.findAt(clickedTileX, clickedTileY);
+    const hasPin = existingPin >= 0;
+    return [
+      {
+        label: hasPin ? 'Rename Location' : 'Name Location',
+        action: () => {
+          if (hasPin) {
+            mapPins.triggerEdit(existingPin);
+          } else {
+            const elev    = sampleElevation(clickedTileX, clickedTileY, elevation);
+            const moist   = sampleMoisture(clickedTileX, clickedTileY, moisture);
+            const riverV  = sampleRiver(clickedTileX, clickedTileY, river);
+            const lakeV   = sampleLake(clickedTileX, clickedTileY, river);
+            const biome   = getBiome(elev, moist, riverV, lakeV);
+            const elevFt  = Math.round(Math.max(0, (elev - 0.42) * 25000));
+            const dx      = clickedTileX - startTileX;
+            const dy      = clickedTileY - startTileY;
+            const miles   = Math.sqrt(dx * dx + dy * dy) * MILES_PER_TILE;
+            const angleDeg = ((Math.atan2(dx, -dy) * 180 / Math.PI) + 360) % 360;
+            const bearing = miles < 0.1 ? 'at start' : `${miles.toFixed(1)} mi ${COMPASS_DIRS[Math.round(angleDeg / 22.5) % 16]}`;
+            const defaultName = capitalizeBiomeName(biome) + (elev > 0.76 ? ' Peak' : '');
+            const idx = mapPins.add({
+              id:            `pin_${Date.now()}`,
+              tileX:         clickedTileX,
+              tileY:         clickedTileY,
+              name:          defaultName,
+              color:         '#000',
+              dayPlaced:     stats.daysTraveled,
+              elevationFt:   elevFt,
+              biome,
+              distanceMiles: miles,
+              bearing,
+              notes:         '',
+            });
+            mapPins.triggerEdit(idx);
+          }
+        },
+      },
+      {
+        label: 'Exit Survey',
+        action: () => exitSurvey(),
+      },
+    ];
+  }
+
   const daylight = isDaylight(stats.daysTraveled);
   const onWater  = isWaterBiome(Math.floor(player.tileX), Math.floor(player.tileY));
   const ptx = Math.floor(player.tileX), pty = Math.floor(player.tileY);
@@ -77,14 +146,10 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
         const toNextDawn = frac < morning ? morning - frac : (1 + morning) - frac;
         const duration = toNextDawn < 2 / 24 ? toNextDawn + 1 : toNextDawn;
         autoDropCanoe(ptx, pty);
-        stats.activeAction = { id: 'rest', label: 'Resting', durationDays: duration, progressDays: 0, energyMultiplier: 1.5 };
+        stats.activeAction = { id: 'rest', label: 'Resting', durationDays: duration, progressDays: 0, energyMultiplier: inShelter ? 8 : 1.5 };
         if (!inShelter) {
-          const fireTile = findAdjacentLandTile(ptx, pty) ?? { tileX: ptx + 1, tileY: pty };
-          const idx = structures.add(fireTile.tileX, fireTile.tileY, 'campfire');
-          structures.complete(idx, stats);
           const timberNeeded = Math.ceil(duration * 24 / 2);
-          timberPiles.addAmount(fireTile.tileX, fireTile.tileY, timberNeeded, isWaterBiome);
-          stats.warmth = 100;
+          placeCampfire(ptx, pty, timberNeeded);
         }
       },
     },
@@ -95,38 +160,34 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
     },
     {
       label: 'Harvest Timber',
-      disabled: !daylight || aboveTreeline || inShelter,
+      disabled: !daylight || aboveTreeline || inShelter || onWater,
       action: () => { stats.activeAction = { id: 'harvest_timber', label: 'Harvesting timber', durationDays: Infinity, progressDays: 0 }; },
     },
     {
       label: 'Survey',
-      disabled: !daylight || onWater || inShelter,
+      disabled: !daylight || inShelter,
       action: () => enterSurvey(),
     },
     {
       label: 'Drop Canoe',
-      disabled: stats.canoes === 0,
+      disabled: stats.canoes === 0 || onWater,
       action: () => {
         stats.canoes--;
         droppedCanoes.drop(Math.floor(player.tileX) + 1, Math.floor(player.tileY));
       },
     },
     {
+      label: 'Campfire',
+      disabled: onWater || aboveTreeline || inShelter,
+      action: () => placeCampfire(ptx, pty, 2),
+    },
+    {
       label: 'Build',
       children: (() => {
         const tileX = Math.floor(player.tileX);
         const tileY = Math.floor(player.tileY);
-        const existingCanoe    = structures.findUnfinished(tileX, tileY, 'canoe');
-        const existingShelter  = structures.findUnfinished(tileX, tileY, 'shelter');
-        // Campfire is placed on an adjacent tile — search all four neighbors.
-        const existingCampfire = (() => {
-          for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]] as [number,number][]) {
-            const idx = structures.findUnfinished(tileX+dx, tileY+dy, 'campfire');
-            if (idx >= 0) return idx;
-          }
-          return -1;
-        })();
-        // Canoe and shelter harvest their own timber — disabled only if the biome has none
+        const existingCanoe   = structures.findUnfinished(tileX, tileY, 'canoe');
+        const existingShelter = structures.findUnfinished(tileX, tileY, 'shelter');
         const canBuildFromBiome = !aboveTreeline && biomeTimber > 0;
         return [
           {
@@ -140,7 +201,7 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
               } else {
                 const idx = structures.add(tileX, tileY, 'canoe');
                 const matTile = findAdjacentLandTile(tileX, tileY) ?? { tileX: tileX + 1, tileY: tileY };
-                timberPiles.addAmount(matTile.tileX, matTile.tileY, cfg.timberCost, isWaterBiome);
+                timberPiles.addAmount(matTile.tileX, matTile.tileY, cfg.timberCost, isWaterBiome, isOccupied);
                 stats.activeAction = { id: 'build_canoe', label: 'Building canoe', durationDays: cfg.totalHours / 24, progressDays: 0, structureIndex: idx, timberPerHour };
               }
             },
@@ -156,25 +217,8 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
               } else {
                 const idx = structures.add(tileX, tileY, 'shelter');
                 const matTile = findAdjacentLandTile(tileX, tileY) ?? { tileX: tileX + 1, tileY: tileY };
-                timberPiles.addAmount(matTile.tileX, matTile.tileY, cfg.timberCost, isWaterBiome);
+                timberPiles.addAmount(matTile.tileX, matTile.tileY, cfg.timberCost, isWaterBiome, isOccupied);
                 stats.activeAction = { id: 'build_shelter', label: 'Building shelter', durationDays: cfg.totalHours / 24, progressDays: 0, structureIndex: idx, timberPerHour };
-              }
-            },
-          },
-          {
-            label: existingCampfire >= 0 ? 'Resume Campfire' : 'Campfire',
-            disabled: onWater || aboveTreeline || inShelter || (existingCampfire < 0 && timberPiles.getAmountWithin(tileX, tileY, 3) < 1),
-            action: () => {
-              const cfg = STRUCTURE_CONFIGS.campfire;
-              const timberPerHour = cfg.timberCost / cfg.totalHours;
-              if (existingCampfire >= 0) {
-                // Resume: player stays on their current tile; structure is already placed.
-                stats.activeAction = { id: 'build_campfire', label: 'Building campfire', durationDays: cfg.totalHours / 24, progressDays: structures.getProgressDays(existingCampfire), structureIndex: existingCampfire, timberPerHour, buildTileX: tileX, buildTileY: tileY };
-              } else {
-                const adjTile = findAdjacentLandTile(tileX, tileY);
-                if (!adjTile) return;
-                const idx = structures.add(adjTile.tileX, adjTile.tileY, 'campfire');
-                stats.activeAction = { id: 'build_campfire', label: 'Building campfire', durationDays: cfg.totalHours / 24, progressDays: 0, structureIndex: idx, timberPerHour, buildTileX: tileX, buildTileY: tileY };
               }
             },
           },
@@ -182,12 +226,12 @@ const radialMenu = createRadialMenu(renderer.domElement, camera, (_tileX, _tileY
       })(),
     },
   ];
-});
+}, () => stats.activeAction?.id === 'survey');
 window.addEventListener('keydown', (e) => {
-  // Any keypress dismisses a blur-triggered pause; don't let the key also act in-game.
-  if (blurPaused) {
-    blurPaused = false;
-    updatePauseState();
+  if (manualPaused || blurPaused) {
+    // Only P can resume — block everything else so no accidental key unpauses or moves the player.
+    if (e.key === 'p' || e.key === 'P') toggleManualPause(), (blurPaused = false), updatePauseState();
+    e.preventDefault();
     return;
   }
   if (e.key === ' ') {
@@ -202,6 +246,19 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     toggleManualPause();
   }
+  if (e.key === 'q' || e.key === 'Q') {
+    e.preventDefault();
+    questPanel.toggle();
+  }
+  if (e.key === 'd' || e.key === 'D') {
+    const onWaterNow = isWaterBiome(Math.floor(player.tileX), Math.floor(player.tileY));
+    if (stats.canoes > 0 && !onWaterNow) {
+      stats.canoes--;
+      const tile = findNearbyDropTile(Math.floor(player.tileX), Math.floor(player.tileY))
+        ?? { tileX: Math.floor(player.tileX) + 1, tileY: Math.floor(player.tileY) };
+      droppedCanoes.drop(tile.tileX, tile.tileY);
+    }
+  }
 });
 
 let playerMoving = false;
@@ -209,6 +266,7 @@ const tileInspector = createTileInspector(
   renderer.domElement, scene, camera, elevation, moisture, river,
   () => radialMenu.isOpen(),
   () => playerMoving,
+  () => manualPaused || blurPaused,
 );
 
 // --- Pause state ---
@@ -229,7 +287,7 @@ pauseOverlay.style.cssText = `
   color: rgba(200,215,230,0.85);
   pointer-events: none;
 `;
-pauseOverlay.textContent = 'PAUSED';
+pauseOverlay.textContent = 'PAUSED  —  press P to resume';
 document.body.appendChild(pauseOverlay);
 
 function updatePauseState() {
@@ -241,13 +299,8 @@ function toggleManualPause() {
   updatePauseState();
 }
 
-// Auto-pause on blur; require explicit input to resume.
+// Auto-pause when window loses focus. Only P resumes — no click or accidental keypress can do it.
 window.addEventListener('blur', () => { blurPaused = true; updatePauseState(); });
-
-// Click anywhere to dismiss a blur-pause (but not a manual pause).
-window.addEventListener('click', () => {
-  if (blurPaused) { blurPaused = false; updatePauseState(); }
-});
 
 // --- Night overlay ---
 const nightOverlay = document.createElement('div');
@@ -302,6 +355,8 @@ function updateDailyRecap(daysTraveled: number) {
 }
 
 // --- Stats & HUD ---
+const COMPASS_DIRS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'] as const;
+
 const stats      = createStats();
 const updateHud  = createHud(currentSeed, () => {
   if (stats.activeAction?.id === 'survey') exitSurvey();
@@ -309,11 +364,24 @@ const updateHud  = createHud(currentSeed, () => {
 }, () => {
   autoDropCanoe(Math.floor(player.tileX), Math.floor(player.tileY));
 }, () => {
+  blurPaused = false;
   toggleManualPause();
+}, () => {
+  questPanel.toggle();
+}, {
+  enter: () => questPanel.show(),
+  leave: () => questPanel.scheduleHide(),
 });
 const structures    = new StructureManager(renderer.domElement, camera);
 const droppedCanoes = new DroppedCanoeManager(renderer.domElement, camera);
 const timberPiles   = new TimberPileManager(renderer.domElement, camera);
+const mapPins       = new MapPinManager(renderer.domElement, camera);
+const ruinSprites   = new RuinSpriteManager(renderer.domElement, camera);
+const quests        = new QuestManager({
+  onComplete: (_q) => { /* future: show completion toast */ },
+});
+const questPanel    = createQuestPanel(quests);
+mapPins.onRename = (pinId, newName) => quests.notify('pin_renamed', { pinId, newName });
 
 // --- Persistence ---
 let startTileX = Math.floor(player.tileX);
@@ -328,6 +396,8 @@ function doSave() {
     structures.getSaveData(),
     droppedCanoes.getSaveData(),
     timberPiles.getSaveData(),
+    mapPins.getSaveData(),
+    quests.getSaveData(),
   );
 }
 
@@ -340,11 +410,112 @@ if (save) {
   for (const s of save.structures    ?? []) structures.restore(s.tileX, s.tileY, s.type, s.progressDays, s.complete);
   for (const c of save.droppedCanoes ?? []) droppedCanoes.drop(c.tileX, c.tileY);
   for (const p of save.timberPiles   ?? []) timberPiles.restorePile(p.tileX, p.tileY, p.amount);
+  if (save.mapPins !== undefined) mapPins.restore(save.mapPins);
+  if (save.quests  !== undefined) quests.restore(save.quests);
+}
+
+// On a fresh game, scan for a large lake shore to start near.
+if (!save) {
+  const lakeTile = findLakeStartTile();
+  if (lakeTile) {
+    player.teleport(lakeTile.tileX, lakeTile.tileY);
+    startTileX = lakeTile.tileX;
+    startTileY = lakeTile.tileY;
+  }
 }
 
 if (save?.weatherSeed !== undefined) weatherSeed = save.weatherSeed;
 const weatherSystem  = createWeatherSystem(weatherSeed);
 const weatherOverlay = createWeatherOverlay(renderer.domElement);
+
+// If this is a fresh game (or an old save without map-pin data), seed the starting location pin.
+if (save?.mapPins === undefined) {
+  const sx    = startTileX, sy = startTileY + 4;
+  const selev = sampleElevation(sx, sy, elevation);
+  const smoist = sampleMoisture(sx, sy, moisture);
+  const sriver = sampleRiver(sx, sy, river);
+  const slake  = sampleLake(sx, sy, river);
+  const sbiome = getBiome(selev, smoist, sriver, slake);
+  const elevFt = Math.round(Math.max(0, (selev - 0.42) / 0.58 * 14400));
+  mapPins.add({
+    id:            'start',
+    tileX:         sx,
+    tileY:         sy,
+    name:          'Starting Location',
+    color:         '#000',
+    dayPlaced:     stats.daysTraveled,
+    elevationFt:   elevFt,
+    biome:         sbiome,
+    distanceMiles: 0,
+    bearing:       'at start',
+    notes:         '',
+  });
+}
+
+// Compute the ruins tile — always deterministic per world seed.
+// Sprites are placed every load; pin + quest only on fresh game.
+{
+  let ruinsSeed = 0;
+  for (let i = 0; i < currentSeed.length; i++) ruinsSeed = (ruinsSeed * 31 + currentSeed.charCodeAt(i)) >>> 0;
+  const rng = () => { ruinsSeed ^= ruinsSeed << 13; ruinsSeed ^= ruinsSeed >>> 17; ruinsSeed ^= ruinsSeed << 5; return (ruinsSeed >>> 0) / 0x100000000; };
+
+  const RUINS_MIN_MILES = 100;
+  const RUINS_MAX_MILES = 150;
+  const WATER_BIOMES    = new Set(['deep_water', 'shallow_water']);
+  let rtx = startTileX, rty = startTileY;
+  for (let attempt = 0; attempt < 2000; attempt++) {
+    const angle = rng() * Math.PI * 2;
+    const dist  = (RUINS_MIN_MILES + rng() * (RUINS_MAX_MILES - RUINS_MIN_MILES)) / MILES_PER_TILE;
+    const cx = Math.round(startTileX + Math.cos(angle) * dist);
+    const cy = Math.round(startTileY + Math.sin(angle) * dist);
+    const re = sampleElevation(cx, cy, elevation);
+    const rm = sampleMoisture(cx, cy, moisture);
+    const rr = sampleRiver(cx, cy, river);
+    const rl = sampleLake(cx, cy, river);
+    const rb = getBiome(re, rm, rr, rl);
+    if (!WATER_BIOMES.has(rb)) { rtx = cx; rty = cy; break; }
+  }
+
+  // Always place the visual sprites.
+  const spriteCount = 3 + Math.floor(rng() * 4); // 3–6
+  ruinSprites.scatter(rtx, rty, spriteCount, rng);
+
+  // Only add pin + quest on a fresh game.
+  if (save?.quests === undefined) {
+    const re = sampleElevation(rtx, rty, elevation);
+    const rm = sampleMoisture(rtx, rty, moisture);
+    const rr = sampleRiver(rtx, rty, river);
+    const rl = sampleLake(rtx, rty, river);
+    const rb = getBiome(re, rm, rr, rl);
+    const reElevFt = Math.round(Math.max(0, (re - 0.42) / 0.58 * 14400));
+    const rdx = rtx - startTileX, rdy = rty - startTileY;
+    const rMiles = Math.sqrt(rdx * rdx + rdy * rdy) * MILES_PER_TILE;
+    const rAngle = ((Math.atan2(rdx, -rdy) * 180 / Math.PI) + 360) % 360;
+    const rBearing = rMiles < 0.1 ? 'at start' : `${rMiles.toFixed(1)} mi ${COMPASS_DIRS[Math.round(rAngle / 22.5) % 16]}`;
+    const ruinsPinId = 'ruins_0';
+    mapPins.add({
+      id:            ruinsPinId,
+      tileX:         rtx,
+      tileY:         rty,
+      name:          'Nameless ruins',
+      color:         '#000',
+      dayPlaced:     0,
+      elevationFt:   reElevFt,
+      biome:         rb,
+      distanceMiles: rMiles,
+      bearing:       rBearing,
+      notes:         '',
+    });
+    quests.add({
+      id:          'quest_ruins_0',
+      type:        'find_and_name',
+      title:       'Find and name the ruins',
+      description: `${rBearing} of starting location`,
+      status:      'active',
+      data:        { pinId: ruinsPinId },
+    });
+  }
+}
 
 // Initialize daily recap tracking after stats are loaded.
 milesAtLastMidnight = stats.milesTraveled;
@@ -361,13 +532,11 @@ function ambientTempAt(tx: number, ty: number): number {
   const biome    = getBiome(elev, moist, riverVal, lakeVal);
   const dayFrac  = stats.daysTraveled % 1;
   const timeMod  = -Math.cos(dayFrac * Math.PI * 2) * 22; // -22 at midnight, +22 at noon
-  const elevMod  = -(elev - 0.5) * 60;                    // -30 at peaks, +12 in valleys
+  const elevMod  = -(elev - 0.5) * 45;                    // -22.5 at peaks, +9 in valleys
   return BIOMES[biome].baseTemp + timeMod + elevMod;
 }
 
 // --- Distance from start ---
-const COMPASS_DIRS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'] as const;
-
 function distanceFromStart(): string {
   const dx = player.tileX - startTileX;
   const dy = player.tileY - startTileY;
@@ -401,11 +570,39 @@ function adjacentWaterBiome(tx: number, ty: number): BiomeProperties | null {
 }
 
 // Returns the first cardinal neighbor that is not a water tile, or null if all are water.
-function findAdjacentLandTile(tx: number, ty: number): { tileX: number; tileY: number } | null {
-  for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]] as [number,number][]) {
-    if (!isWaterBiome(tx + dx, ty + dy)) return { tileX: tx + dx, tileY: ty + dy };
-  }
+const ADJ_OFFSETS_R1 = [[0,1],[1,0],[-1,0],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]] as const;
+const ADJ_OFFSETS_R2 = [
+  [0,2],[2,0],[-2,0],[0,-2],
+  [1,2],[-1,2],[2,1],[2,-1],[-1,-2],[1,-2],[-2,1],[-2,-1],
+  [2,2],[-2,2],[2,-2],[-2,-2],
+] as const;
+
+function isOccupied(tx: number, ty: number): boolean {
+  return structures.hasStructureAt(tx, ty) || droppedCanoes.hasCanoeAt(tx, ty);
+}
+
+function findFreeTile(tx: number, ty: number, alsoExcludeTimber = false): { tileX: number; tileY: number } | null {
+  const blocked = (dx: number, dy: number) => {
+    const x = tx + dx, y = ty + dy;
+    return isWaterBiome(x, y) || isOccupied(x, y) || (alsoExcludeTimber && timberPiles.getAmountWithin(x, y, 0) > 0);
+  };
+  const r1 = ADJ_OFFSETS_R1.find(([dx, dy]) => !blocked(dx, dy));
+  if (r1) return { tileX: tx + r1[0], tileY: ty + r1[1] };
+  const r2 = ADJ_OFFSETS_R2.find(([dx, dy]) => !blocked(dx, dy));
+  if (r2) return { tileX: tx + r2[0], tileY: ty + r2[1] };
   return null;
+}
+
+function findAdjacentLandTile(tx: number, ty: number): { tileX: number; tileY: number } | null {
+  return findFreeTile(tx, ty, true);
+}
+
+function placeCampfire(tx: number, ty: number, timberUnits: number) {
+  const tile = findAdjacentLandTile(tx, ty) ?? { tileX: tx + 1, tileY: ty };
+  const idx = structures.add(tile.tileX, tile.tileY, 'campfire');
+  structures.complete(idx, stats);
+  timberPiles.addAmount(tile.tileX, tile.tileY, timberUnits, isWaterBiome, isOccupied);
+  stats.warmth = 100;
 }
 
 // Find the nearest non-water, unoccupied tile within 2 squares to drop a canoe.
@@ -432,6 +629,62 @@ function autoDropCanoe(fromX: number, fromY: number) {
   droppedCanoes.drop(tile.tileX, tile.tileY);
 }
 
+// Search for the nearest land tile that borders a large lake.
+// Pre-sorts candidates by distance from origin so the scan terminates as
+// soon as the closest qualifying shore is found.
+function findLakeStartTile(): { tileX: number; tileY: number } | null {
+  const SEARCH    = 280;   // tile radius to scan
+  const STEP      = 3;     // grid step (coarse pass)
+  const MIN_ADJ   = 2;     // adjacent lake-water tiles required on the player tile
+  const CHECK_R   = 8;     // radius for the "is it a large lake?" count
+  const MIN_LAKE  = 30;    // lake tiles required within CHECK_R
+
+  // Build candidate list and sort nearest-first for early termination.
+  const pts: [number, number][] = [];
+  for (let tx = -SEARCH; tx <= SEARCH; tx += STEP) {
+    for (let ty = -SEARCH; ty <= SEARCH; ty += STEP) {
+      pts.push([tx, ty]);
+    }
+  }
+  pts.sort((a, b) => (a[0]*a[0] + a[1]*a[1]) - (b[0]*b[0] + b[1]*b[1]));
+
+  for (const [tx, ty] of pts) {
+    // Must be a walkable land tile.
+    const e = sampleElevation(tx, ty, elevation);
+    const m = sampleMoisture(tx, ty, moisture);
+    const r = sampleRiver(tx, ty, river);
+    const l = sampleLake(tx, ty, river);
+    const b = getBiome(e, m, r, l);
+    if (b === 'deep_water' || b === 'shallow_water') continue;
+
+    // Count adjacent lake-type water tiles (lake noise check, not river).
+    let adjLake = 0;
+    for (let adx = -1; adx <= 1; adx++) {
+      for (let ady = -1; ady <= 1; ady++) {
+        if (adx === 0 && ady === 0) continue;
+        const ae = sampleElevation(tx + adx, ty + ady, elevation);
+        const al = sampleLake(tx + adx, ty + ady, river);
+        if (al > 0.78 && ae >= 0.42 && ae < 0.52) adjLake++;
+      }
+    }
+    if (adjLake < MIN_ADJ) continue;
+
+    // Verify it's a *large* lake by counting water tiles in a wider radius.
+    let lakeCount = 0;
+    for (let dx = -CHECK_R; dx <= CHECK_R; dx++) {
+      for (let dy = -CHECK_R; dy <= CHECK_R; dy++) {
+        const le = sampleElevation(tx + dx, ty + dy, elevation);
+        const ll = sampleLake(tx + dx, ty + dy, river);
+        if (ll > 0.78 && le >= 0.42 && le < 0.52) lakeCount++;
+      }
+    }
+    if (lakeCount < MIN_LAKE) continue;
+
+    return { tileX: tx, tileY: ty };
+  }
+  return null;
+}
+
 function canEnterTile(tx: number, ty: number): boolean {
   if (!isWaterBiome(tx, ty)) return true;
   if (stats.canoes > 0) return true; // canoe allows all water travel
@@ -445,13 +698,29 @@ function canEnterTile(tx: number, ty: number): boolean {
   return false;
 }
 
-// --- Canoe emoji overlay ---
-const canoeEl = document.createElement('div');
-canoeEl.textContent = '🛶';
+// --- Player sprite overlay ---
+const playerEl = document.createElement('img');
+playerEl.src = playerFrontIdleUrl;
+playerEl.style.cssText = `
+  position: fixed;
+  width: 32px;
+  height: 32px;
+  image-rendering: pixelated;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 600;
+`;
+document.body.appendChild(playerEl);
+player.mesh.visible = false;
+
+// --- Canoe sprite overlay ---
+const canoeEl = document.createElement('img');
+canoeEl.src = canoeRightUrl;
 canoeEl.style.cssText = `
   position: fixed;
-  font-size: 26px;
-  line-height: 1;
+  width: 78px;
+  height: 32px;
+  image-rendering: pixelated;
   transform: translate(-50%, -50%);
   pointer-events: none;
   z-index: 600;
@@ -557,10 +826,15 @@ let surveyTotalQueue = 0; // snapshot at beginSurvey to drive the load bar
 function getPlayerScreenPos() {
   const r  = renderer.domElement.getBoundingClientRect();
   const ea = r.width / r.height, ca = CANVAS_WIDTH / CANVAS_HEIGHT;
-  let x: number, y: number, w: number, h: number;
-  if (ea > ca) { h = r.height; w = h * ca; x = r.left + (r.width  - w) / 2; y = r.top; }
-  else         { w = r.width;  h = w / ca; x = r.left;                        y = r.top + (r.height - h) / 2; }
-  return { x: x + w / 2, y: y + h / 2 };
+  let cx: number, cy: number, w: number, h: number;
+  if (ea > ca) { h = r.height; w = h * ca; cx = r.left + (r.width  - w) / 2; cy = r.top; }
+  else         { w = r.width;  h = w / ca; cx = r.left;                        cy = r.top + (r.height - h) / 2; }
+  const wx = player.mesh.position.x;
+  const wy = player.mesh.position.y;
+  return {
+    x: cx + (0.5 + (wx - camera.position.x) / CANVAS_WIDTH)  * w,
+    y: cy + (0.5 - (wy - camera.position.y) / CANVAS_HEIGHT) * h,
+  };
 }
 
 function showForageEmoji(emoji: string) {
@@ -622,7 +896,9 @@ function showGameOver() {
 
   const sub = document.createElement('div');
   sub.style.cssText = 'font-size: 13px; color: #888; margin-bottom: 32px; line-height: 1.6;';
-  sub.textContent = `Day ${Math.floor(stats.daysTraveled) + 1}  ·  ${stats.milesTraveled.toFixed(1)} miles traveled`;
+  const homeDx = player.tileX - startTileX, homeDy = player.tileY - startTileY;
+  const milesFromHome = Math.sqrt(homeDx * homeDx + homeDy * homeDy) * MILES_PER_TILE;
+  sub.innerHTML = `Day ${Math.floor(stats.daysTraveled) + 1}  ·  ${stats.milesTraveled.toFixed(1)} miles traveled<br>${milesFromHome.toFixed(1)} miles from home`;
 
   const btn = document.createElement('button');
   btn.textContent = 'Start over';
@@ -647,6 +923,8 @@ function showGameOver() {
 // --- Game loop ---
 let lastTime = performance.now();
 let prevInShelter = false;
+let lastFacingDir: 'up' | 'down' | 'left' | 'right' = 'down';
+let lastCanoeDir: 'left' | 'right' = 'right';
 
 function tick() {
   if (gameOver) return;
@@ -714,24 +992,50 @@ function tick() {
   const prevY = player.visualY;
   player.update(playerInput, effectiveDelta, effectiveSpeed, canEnterTile);
 
-  // Swap player mesh for canoe emoji while paddling
-  player.mesh.visible = !usingCanoe;
-  if (usingCanoe) {
-    const pos = getPlayerScreenPos();
-    canoeEl.style.display = 'block';
-    canoeEl.style.left = `${pos.x}px`;
-    canoeEl.style.top  = `${pos.y}px`;
-  } else {
-    canoeEl.style.display = 'none';
-  }
   const dx = player.visualX - prevX;
   const dy = player.visualY - prevY;
   const tilesMoved = Math.sqrt(dx * dx + dy * dy);
 
+  // Update facing direction and choose sprites.
+  // Use integer input state (not float delta) so horizontal always wins over vertical
+  // when both are held simultaneously, eliminating diagonal flicker.
+  // Position is set later, after the camera update, so DOM and WebGL share the same camera.
+  {
+    if (tilesMoved > 1e-4) {
+      const inputDx = (playerInput.right ? 1 : 0) - (playerInput.left ? 1 : 0);
+      const inputDy = (playerInput.down  ? 1 : 0) - (playerInput.up   ? 1 : 0);
+      if (inputDx !== 0) {
+        lastFacingDir = inputDx > 0 ? 'right' : 'left';
+        lastCanoeDir  = inputDx > 0 ? 'right' : 'left';
+      } else if (inputDy !== 0) {
+        lastFacingDir = inputDy > 0 ? 'down' : 'up';
+      }
+    }
+    let playerSrc: string;
+    if (tilesMoved > 1e-4 && (lastFacingDir === 'right' || lastFacingDir === 'left')) {
+      playerSrc = lastFacingDir === 'right' ? playerRightWalkUrl : playerLeftWalkUrl;
+    } else if (lastFacingDir === 'up') {
+      playerSrc = playerBackIdleUrl;
+    } else {
+      playerSrc = playerFrontIdleUrl;
+    }
+    if (usingCanoe) {
+      playerEl.style.display = 'none';
+      canoeEl.style.display  = 'block';
+      const newCanoeSrc = lastCanoeDir === 'left' ? canoeLeftUrl : canoeRightUrl;
+      if (canoeEl.src !== newCanoeSrc) canoeEl.src = newCanoeSrc;
+    } else {
+      canoeEl.style.display  = 'none';
+      playerEl.style.display = inShelter ? 'none' : 'block';
+      if (playerEl.src !== playerSrc) playerEl.src = playerSrc;
+    }
+  }
+
   playerMoving = tilesMoved > 1e-4;
   if (playerMoving) {
     radialMenu.closeAll();
-    if (stats.activeAction?.id === 'forage') stats.activeAction = null;
+    const id = stats.activeAction?.id;
+    if (id === 'forage' || id === 'harvest_timber' || id === 'harvest_minerals') stats.activeAction = null;
   }
 
   // Auto-pickup: collect a dropped canoe when walking onto its tile
@@ -768,7 +1072,7 @@ function tick() {
 
   for (const ev of forageEvents) {
     showForageEmoji(ev.emoji);
-    if (ev.timber) timberPiles.addAmount(tx, ty, ev.timber, isWaterBiome);
+    if (ev.timber) timberPiles.addAmount(tx, ty, ev.timber, isWaterBiome, isOccupied);
   }
 
   // Lightning: thunderstorm + high elevation + not sheltered = strike chance
@@ -847,6 +1151,8 @@ function tick() {
   structures.update();
   droppedCanoes.update();
   timberPiles.update();
+  ruinSprites.update();
+  mapPins.update();
 
   // During survey the player tile doesn't change, so normal ACTIVE_RADIUS
   // window stays centered on the player. The survey async queue handles far chunks.
@@ -856,6 +1162,19 @@ function tick() {
   const camX = player.mesh.position.x + surveyOffsetX * TILE_SIZE;
   const camY = player.mesh.position.y - surveyOffsetY * TILE_SIZE;
   camera.position.set(camX, camY, 1);
+
+  // Position player/canoe overlays after camera update so DOM and WebGL use the same camera,
+  // preventing the per-frame jitter that comes from using a stale camera position.
+  {
+    const pos = getPlayerScreenPos();
+    if (usingCanoe) {
+      canoeEl.style.left = `${pos.x}px`;
+      canoeEl.style.top  = `${pos.y}px`;
+    } else {
+      playerEl.style.left = `${pos.x}px`;
+      playerEl.style.top  = `${pos.y}px`;
+    }
+  }
 
   renderer.render(scene, camera);
 }

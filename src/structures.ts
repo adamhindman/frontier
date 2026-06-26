@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { PlayerStats } from './playerStats';
 import { TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
+import canoeEmptyUrl from './assets/tiles/canoe-empty.png';
 
 export type StructureType = 'canoe' | 'shelter' | 'campfire';
 
@@ -45,7 +46,7 @@ function getContentRect(canvas: HTMLCanvasElement) {
 }
 
 export class DroppedCanoeManager {
-  private items: { tileX: number; tileY: number; el: HTMLDivElement }[] = [];
+  private items: { tileX: number; tileY: number; el: HTMLImageElement }[] = [];
   private canvas: HTMLCanvasElement;
   private camera: THREE.OrthographicCamera;
 
@@ -55,16 +56,16 @@ export class DroppedCanoeManager {
   }
 
   drop(tileX: number, tileY: number) {
-    const el = document.createElement('div');
-    el.textContent = '🛶';
+    const el = document.createElement('img');
+    el.src = canoeEmptyUrl;
     el.style.cssText = `
       position: fixed;
-      font-size: 22px;
-      line-height: 1;
+      width: 53px;
+      height: 20px;
+      image-rendering: pixelated;
       transform: translate(-50%, -50%);
       pointer-events: none;
       z-index: 599;
-      user-select: none;
     `;
     document.body.appendChild(el);
     this.items.push({ tileX, tileY, el });
@@ -77,6 +78,10 @@ export class DroppedCanoeManager {
     this.items[idx].el.remove();
     this.items.splice(idx, 1);
     return true;
+  }
+
+  hasCanoeAt(tileX: number, tileY: number): boolean {
+    return this.items.some(c => c.tileX === tileX && c.tileY === tileY);
   }
 
   getSaveData(): { tileX: number; tileY: number }[] {

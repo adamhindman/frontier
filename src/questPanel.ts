@@ -1,0 +1,146 @@
+import type { QuestManager } from "./quests";
+import { getTopBandHeight } from "./hud";
+
+export function createQuestPanel(questManager: QuestManager) {
+  const panel = document.createElement("div");
+  panel.style.cssText = `
+    position: fixed;
+    right: 24px;
+    min-width: 280px;
+    max-width: 380px;
+    background: #f5e6c0;
+    border: 1px solid #c4a060;
+    border-radius: 3px;
+    padding: 16px 20px 18px;
+    z-index: 1100;
+    display: none;
+    pointer-events: auto;
+    font: 14px/1.65 Georgia, 'Book Antiqua', 'Palatino Linotype', serif;
+    color: #3d2614;
+    box-shadow: 2px 6px 20px rgba(0,0,0,0.38);
+  `;
+  document.body.appendChild(panel);
+
+  const titleEl = document.createElement("div");
+  titleEl.textContent = "Expedition Charter";
+  titleEl.style.cssText = `
+    font: italic bold 15px/1 Georgia, serif;
+    color: #7a4a1a;
+    letter-spacing: 0.03em;
+    margin-bottom: 14px;
+    border-bottom: 1px solid #c4a060;
+    padding-bottom: 10px;
+  `;
+  panel.appendChild(titleEl);
+
+  const list = document.createElement("div");
+  list.style.cssText = "display: flex; flex-direction: column; gap: 14px;";
+  panel.appendChild(list);
+
+  let open = false;
+  let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function reposition() {
+    panel.style.top = `${getTopBandHeight() + 6}px`;
+  }
+
+  function renderList() {
+    list.innerHTML = "";
+    const quests = questManager.getAll();
+    if (quests.length === 0) {
+      const empty = document.createElement("div");
+      empty.textContent = "No quests yet.";
+      empty.style.cssText = "color: #9a7a50; font-style: italic;";
+      list.appendChild(empty);
+      return;
+    }
+    for (const quest of quests) {
+      const item = document.createElement("div");
+      item.style.cssText = "display: flex; flex-direction: column; gap: 3px;";
+
+      const header = document.createElement("div");
+      header.style.cssText = "display: flex; align-items: baseline; gap: 8px;";
+
+      const statusDot = document.createElement("span");
+      statusDot.textContent = quest.status === "complete" ? "✓" : "◎";
+      statusDot.style.cssText =
+        quest.status === "complete"
+          ? "color: #5a7a3a; font-size: 13px; flex-shrink: 0;"
+          : "color: #9a6a20; font-size: 13px; flex-shrink: 0;";
+
+      const titleSpan = document.createElement("span");
+      titleSpan.textContent = quest.title;
+      titleSpan.style.cssText =
+        quest.status === "complete"
+          ? "color: #9a8060; text-decoration: line-through; font-style: italic;"
+          : "color: #3d2614; font-weight: bold;";
+
+      header.append(statusDot, titleSpan);
+
+      const desc = document.createElement("div");
+      desc.textContent = quest.description;
+      desc.style.cssText =
+        "color: #7a5a30; font-size: 12px; font-style: italic; padding-left: 22px;";
+
+      item.append(header, desc);
+      list.appendChild(item);
+    }
+  }
+
+  function show() {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+    if (!open) {
+      renderList();
+      open = true;
+    }
+    reposition();
+    panel.style.display = "block";
+  }
+
+  function hide() {
+    panel.style.display = "none";
+    open = false;
+    hideTimer = null;
+  }
+
+  function scheduleHide() {
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(hide, 180);
+  }
+
+  function cancelHide() {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+  }
+
+  function toggle() {
+    open ? hide() : show();
+  }
+
+  // Hovering over the panel itself keeps it open.
+  panel.addEventListener("mouseenter", cancelHide);
+  panel.addEventListener("mouseleave", scheduleHide);
+
+  // Click outside closes it.
+  window.addEventListener("mousedown", (e) => {
+    if (open && !panel.contains(e.target as Node)) hide();
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (open && e.key === "Escape") {
+      e.stopPropagation();
+      hide();
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    if (open) reposition();
+  });
+
+  return { toggle, show, hide, scheduleHide, cancelHide, isOpen: () => open };
+}

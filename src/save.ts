@@ -1,5 +1,7 @@
 import type { PlayerStats } from './playerStats';
 import type { StructureType } from './structures';
+import type { MapPin } from './mapPins';
+import type { Quest } from './quests';
 
 const SAVE_VERSION = 3;
 
@@ -14,6 +16,8 @@ export interface SaveData {
   structures: { tileX: number; tileY: number; type: StructureType; progressDays: number; complete: boolean }[];
   droppedCanoes: { tileX: number; tileY: number }[];
   timberPiles: { tileX: number; tileY: number; amount: number }[];
+  mapPins?: MapPin[];
+  quests?:  Quest[];
 }
 
 function saveKey(seed: string): string {
@@ -31,6 +35,8 @@ export function saveGame(
   structures: SaveData['structures'],
   droppedCanoes: SaveData['droppedCanoes'],
   timberPiles: SaveData['timberPiles'],
+  mapPins: SaveData['mapPins'],
+  quests:  SaveData['quests'],
 ): void {
   const data: SaveData = {
     version: SAVE_VERSION,
@@ -43,6 +49,8 @@ export function saveGame(
     structures,
     droppedCanoes,
     timberPiles,
+    mapPins,
+    quests,
   };
   try {
     localStorage.setItem(saveKey(seed), JSON.stringify(data));
