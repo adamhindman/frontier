@@ -48,6 +48,7 @@ export function createTileInspector(
   isMenuOpen: () => boolean = () => false,
   isMoving: () => boolean = () => false,
   isPaused: () => boolean = () => false,
+  isHunting: () => boolean = () => false,
 ): { update: () => void } {
   // --- Tooltip ---
   const tooltip = document.createElement('div');
@@ -91,7 +92,7 @@ export function createTileInspector(
   canvas.addEventListener('mousemove', (e) => {
     if (intentTimer !== null) { clearTimeout(intentTimer); intentTimer = null; }
 
-    if (isMenuOpen() || isPaused()) {
+    if (isMenuOpen() || isPaused() || isHunting()) {
       hideTooltip();
       highlight.visible = false;
       return;
@@ -156,7 +157,7 @@ export function createTileInspector(
 
   // Called every tick so movement hides the tooltip even when the mouse is still.
   function update() {
-    if (isMoving() || isMenuOpen() || isPaused()) hideTooltip();
+    if (isMoving() || isMenuOpen() || isPaused() || isHunting()) hideTooltip();
   }
 
   return { update };

@@ -32,7 +32,7 @@ interface PlacedStructure {
   complete: boolean;
   progressDays: number;
   burnProgress: number; // game-days elapsed since campfire was lit (not persisted)
-  el: HTMLDivElement;
+  el: HTMLElement;
   tooltipEl: HTMLDivElement;
 }
 
@@ -60,8 +60,8 @@ export class DroppedCanoeManager {
     el.src = canoeEmptyUrl;
     el.style.cssText = `
       position: fixed;
-      width: 53px;
-      height: 20px;
+      width: 64px;
+      height: auto;
       image-rendering: pixelated;
       transform: translate(-50%, -50%);
       pointer-events: none;
@@ -132,18 +132,36 @@ export class StructureManager {
     `;
     document.body.appendChild(tooltipEl);
 
-    const el = document.createElement('div');
-    el.textContent = cfg.emoji;
-    el.style.cssText = `
-      position: fixed;
-      font-size: 22px;
-      line-height: 1;
-      transform: translate(-50%, -50%);
-      pointer-events: auto;
-      z-index: 600;
-      cursor: default;
-      user-select: none;
-    `;
+    let el: HTMLElement;
+    if (type === 'canoe') {
+      const img = document.createElement('img');
+      img.src = canoeEmptyUrl;
+      img.style.cssText = `
+        position: fixed;
+        width: 64px;
+        height: auto;
+        image-rendering: pixelated;
+        transform: translate(-50%, -50%);
+        pointer-events: auto;
+        z-index: 600;
+        cursor: default;
+      `;
+      el = img;
+    } else {
+      const div = document.createElement('div');
+      div.textContent = cfg.emoji;
+      div.style.cssText = `
+        position: fixed;
+        font-size: 22px;
+        line-height: 1;
+        transform: translate(-50%, -50%);
+        pointer-events: auto;
+        z-index: 600;
+        cursor: default;
+        user-select: none;
+      `;
+      el = div;
+    }
 
     el.addEventListener('mouseenter', () => { tooltipEl.style.opacity = '1'; });
     el.addEventListener('mouseleave', () => { tooltipEl.style.opacity = '0'; });

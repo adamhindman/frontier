@@ -45,13 +45,12 @@ function pickTransition(probs: number[], rand: number): WeatherType {
 }
 
 export function weatherLabel(event: WeatherEvent): string {
-  const iWord = event.intensity === 1 ? 'Light' : event.intensity === 2 ? 'Moderate' : 'Heavy';
   switch (event.type) {
     case 'clear':        return 'Clear';
     case 'overcast':     return 'Overcast';
-    case 'rain':         return `${iWord} Rain`;
-    case 'thunderstorm': return `${iWord} Storm`;
-    case 'blizzard':     return `${iWord} Blizzard`;
+    case 'rain':         return event.intensity === 1 ? 'Light Rain' : event.intensity === 2 ? 'Rain' : 'Heavy Rain';
+    case 'thunderstorm': return event.intensity === 1 ? 'Light Storm' : event.intensity === 2 ? 'Storm' : 'Heavy Storm';
+    case 'blizzard':     return event.intensity === 1 ? 'Light Blizzard' : event.intensity === 2 ? 'Blizzard' : 'Heavy Blizzard';
     case 'fog':          return event.intensity === 3 ? 'Dense Fog' : 'Fog';
   }
 }

@@ -10,8 +10,9 @@ import {
 const plainsBiome: BiomeProperties = {
   color: '#6aaa38', elevMin: 0.42, elevMax: 0.55, speedMultiplier: 1.0,
   baseResources: { plants: 6, game: 5, water: 3, timber: 2, minerals: 2 },
-  foodDrainPerTile: 0.06, waterDrainPerTile: 0.012, energyDrainPerTile: 0.3,
+  foodDrainPerTile: 0.06, waterDrainPerTile: 0.006, energyDrainPerTile: 0.3,
   baseTemp: 65, surveyVisibilityMult: 1.0,
+  forageYieldLbsPerHour: 0.075, forageWaterGalPerHour: 0.40,
 };
 
 // Zero-resource biome: passive gather never triggers, safe for floor tests

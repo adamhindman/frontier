@@ -65,6 +65,8 @@ export function loadGame(seed: string): SaveData | null {
     if (!raw) return null;
     const data = JSON.parse(raw) as SaveData;
     if (data.version !== SAVE_VERSION) return null;
+    data.stats.foodConsumed  ??= 0;
+    data.stats.waterConsumed ??= 0;
     return data;
   } catch {
     return null;

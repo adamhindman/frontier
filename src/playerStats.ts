@@ -31,15 +31,19 @@ export interface PlayerStats {
   energy: number; // 0–100
   warmth: number; // 0–100; drops in cold, restored by campfire/shelter
   milesTraveled: number;
+  foodConsumed: number;  // cumulative lbs eaten; diff at midnight for daily total
+  waterConsumed: number; // cumulative gal drunk
   daysTraveled: number;
   daysTraveledSinceRest: number; // resets when a ≥1-day rest completes
   statusConditions: StatusCondition[];
   activeAction: ActiveAction | null;
+  rifleAmmo: number; // rounds remaining; starts at 999
+  pelts: number;     // fur pelts collected; no capacity cap
 }
 
 export const SECONDS_PER_DAY    = 120;
 export const MILES_PER_TILE     = 0.05;
-export const FOOD_CAPACITY_LBS  = 30;
+export const FOOD_CAPACITY_LBS  = 20;
 export const WATER_CAPACITY_GAL = 10;
 export const MINERALS_CAPACITY  = 50;
 
@@ -52,8 +56,8 @@ export function isDaylight(daysTraveled: number): boolean {
 }
 
 // Passive gather: probability per tile per resource unit of triggering a find
-const PASSIVE_GATHER_PROB          = 0.001;
-const PASSIVE_FOOD_AMOUNT_PER_RES  = 0.125; // lbs per resource unit (0-10 scale)
+const PASSIVE_GATHER_PROB          = 0.0002;
+const PASSIVE_FOOD_AMOUNT_PER_RES  = 0.05;  // lbs per resource unit (0-10 scale)
 const PASSIVE_WATER_AMOUNT_PER_RES = 0.07;
 
 const PASSIVE_FOOD_EMOJIS = ['🌿', '🫐', '🌰', '🍓'] as const;
@@ -61,19 +65,21 @@ const PASSIVE_FOOD_EMOJIS = ['🌿', '🫐', '🌰', '🍓'] as const;
 // Active forage: ticks happen FORAGE_TICKS_PER_HOUR times per in-game hour;
 // per-tick amounts are divided by the same constant so hourly totals stay identical.
 const FORAGE_TICKS_PER_HOUR = 4; // tick every 15 game-minutes (~1.25 real seconds)
-const FORAGE_PLANTS_FACTOR  = 0.30 / FORAGE_TICKS_PER_HOUR;
-const FORAGE_WATER_FACTOR   = 0.40 / FORAGE_TICKS_PER_HOUR;
-const FORAGE_GAME_FACTOR    = 0.50 / FORAGE_TICKS_PER_HOUR;
+// Fish via adjacent water tile — rate set here; plant food and water use per-biome fields.
+const FORAGE_FISH_FACTOR    = 0.25 / FORAGE_TICKS_PER_HOUR;
 const HARVEST_TIMBER_FACTOR = 0.80 / FORAGE_TICKS_PER_HOUR;
 
 export type ForageEvent = { emoji: string; timber?: number };
 
-const REST_FOOD_DRAIN_PER_DAY   = 2;  // lbs/day
-const REST_WATER_DRAIN_PER_DAY  = 4;  // gal/day
+const BACKGROUND_FOOD_DRAIN_PER_DAY  = 0.9;  // lbs/day — always-on metabolic baseline
+const BACKGROUND_WATER_DRAIN_PER_DAY = 0.5;  // gal/day
+
+const REST_FOOD_DRAIN_PER_DAY   = 3.4;  // lbs/day (on top of background → ~4.3 total)
+const REST_WATER_DRAIN_PER_DAY  = 1.0;  // gal/day (on top of background → ~1.5 total)
 const REST_ENERGY_GAIN_PER_DAY  = 25;
 
-const FORAGE_FOOD_DRAIN_PER_DAY    = 1.0; // lbs/day — light work
-const FORAGE_WATER_DRAIN_PER_DAY   = 0.75; // gal/day
+const FORAGE_FOOD_DRAIN_PER_DAY    = 2.7; // lbs/day (on top of background → ~3.6 total)
+const FORAGE_WATER_DRAIN_PER_DAY   = 0.5; // gal/day (on top of background → ~1.0 total)
 const FORAGE_ENERGY_GAIN_PER_DAY   = 8;   // /day — lighter than rest (25/day) but still restorative
 
 const MORALE_LEVELS = [
@@ -143,10 +149,14 @@ export function createStats(): PlayerStats {
     energy: 100,
     warmth: 100,
     milesTraveled: 0,
+    foodConsumed: 0,
+    waterConsumed: 0,
     daysTraveled: 9 / 24,
     daysTraveledSinceRest: 0,
     statusConditions: [],
     activeAction: null,
+    rifleAmmo: 999,
+    pelts: 0,
   };
 }
 
@@ -172,6 +182,7 @@ export function updateStats(
   ambientTempF = 70,
   warming: 'campfire' | 'shelter' | false = false,
   weatherEffects?: WeatherEffects,
+  portaging = false,
 ): { timeTicking: boolean; forageEvents: ForageEvent[] } {
   const isMoving = tilesMoved > MOVE_THRESHOLD;
   const timeTicking = true; // clock runs continuously; callers pass delta=0 to pause
@@ -180,9 +191,12 @@ export function updateStats(
   stats.milesTraveled += tilesMoved * MILES_PER_TILE;
 
   if (isMoving) {
+    const foodBefore = stats.food, waterBefore = stats.water;
     stats.food   = Math.max(0, stats.food   - tilesMoved * biome.foodDrainPerTile);
     stats.water  = Math.max(0, stats.water  - tilesMoved * biome.waterDrainPerTile);
-    stats.energy = Math.max(0, stats.energy - tilesMoved * biome.energyDrainPerTile);
+    stats.foodConsumed  += foodBefore  - stats.food;
+    stats.waterConsumed += waterBefore - stats.water;
+    stats.energy = Math.max(0, stats.energy - tilesMoved * biome.energyDrainPerTile * (portaging ? 2.0 : 1.0));
 
     // Opportunistic passive gathering: occasional burst based on terrain richness.
     // Suppressed while paddling a canoe — no foraging on open water.
@@ -215,6 +229,13 @@ export function updateStats(
     } else if (stats.activeAction?.id === 'build_canoe') {
       gameDays *= 4;
     }
+
+    // Background metabolic drain — applies regardless of activity.
+    { const f = stats.food, w = stats.water;
+      stats.food  = Math.max(0, stats.food  - gameDays * BACKGROUND_FOOD_DRAIN_PER_DAY);
+      stats.water = Math.max(0, stats.water - gameDays * BACKGROUND_WATER_DRAIN_PER_DAY);
+      stats.foodConsumed  += f - stats.food;
+      stats.waterConsumed += w - stats.water; }
 
     // Warmth changes only while the clock is ticking.
     if (warming === 'campfire') {
@@ -256,9 +277,14 @@ export function updateStats(
     // Health below 100 continuously drains morale, scaling with severity
     moraleDrainPerDay += (1 - stats.health / 100) * 20;
     if (stats.energy < 30) moraleDrainPerDay += 14; // exhausted
-    // Travel fatigue: ramps up after 0.5 days without a full rest (caps at +12/day)
-    if (stats.daysTraveledSinceRest > 0.5) {
-      moraleDrainPerDay += Math.min((stats.daysTraveledSinceRest - 0.5) * 3, 12);
+    // Travel fatigue: ramps up after 1 day without rest, caps at +24/day
+    if (stats.daysTraveledSinceRest > 1) {
+      moraleDrainPerDay += Math.min((stats.daysTraveledSinceRest - 1) * 16, 24);
+    }
+    // Exhaustion energy drain: kicks in after 12 hours without rest, not during rest itself
+    if (stats.daysTraveledSinceRest > 0.5 && stats.activeAction?.id !== 'rest') {
+      const exhaustionDrain = Math.min((stats.daysTraveledSinceRest - 0.5) * 60, 60);
+      stats.energy = Math.max(0, stats.energy - gameDays * exhaustionDrain);
     }
     if (warming !== 'shelter') moraleDrainPerDay += weatherEffects?.moraleDrainPerDay ?? 0;
     stats.morale = Math.max(0, stats.morale - gameDays * moraleDrainPerDay);
@@ -299,14 +325,17 @@ export function updateStats(
       stats.activeAction.progressDays += gameDays;
 
       if (stats.activeAction.id === 'rest') {
-        stats.food   = Math.max(0,   stats.food   - gameDays * REST_FOOD_DRAIN_PER_DAY);
-        stats.water  = Math.max(0,   stats.water  - gameDays * REST_WATER_DRAIN_PER_DAY);
+        { const f = stats.food, w = stats.water;
+          stats.food  = Math.max(0, stats.food  - gameDays * REST_FOOD_DRAIN_PER_DAY);
+          stats.water = Math.max(0, stats.water - gameDays * REST_WATER_DRAIN_PER_DAY);
+          stats.foodConsumed  += f - stats.food;
+          stats.waterConsumed += w - stats.water; }
         stats.energy = Math.min(100, stats.energy + gameDays * REST_ENERGY_GAIN_PER_DAY * (stats.activeAction.energyMultiplier ?? 1));
 
         if (stats.activeAction.progressDays >= stats.activeAction.durationDays) {
+          stats.daysTraveledSinceRest = 0; // any completed rest clears fatigue
           if (stats.activeAction.durationDays >= 1) {
-            stats.daysTraveledSinceRest = 0;
-            stats.morale = stepMoraleUp(stats.morale);
+            stats.morale = stepMoraleUp(stats.morale); // morale bonus only for full rest
           }
           stats.activeAction = null;
         }
@@ -316,8 +345,11 @@ export function updateStats(
           stats.activeAction = null;
         } else {
           // Foraging drains food/water but slowly restores energy (lighter work than resting)
-          stats.food   = Math.max(0, stats.food   - gameDays * FORAGE_FOOD_DRAIN_PER_DAY);
-          stats.water  = Math.max(0, stats.water  - gameDays * FORAGE_WATER_DRAIN_PER_DAY);
+          { const f = stats.food, w = stats.water;
+            stats.food  = Math.max(0, stats.food  - gameDays * FORAGE_FOOD_DRAIN_PER_DAY);
+            stats.water = Math.max(0, stats.water - gameDays * FORAGE_WATER_DRAIN_PER_DAY);
+            stats.foodConsumed  += f - stats.food;
+            stats.waterConsumed += w - stats.water; }
           stats.energy = Math.min(100, stats.energy + gameDays * FORAGE_ENERGY_GAIN_PER_DAY);
 
           // Roll FORAGE_TICKS_PER_HOUR times per in-game hour
@@ -334,19 +366,17 @@ export function updateStats(
             const gatherFood = () => {
               if (!needFood) return;
               if (fishBiome) {
-                stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * fishBiome.baseResources.game * FORAGE_GAME_FACTOR * forageMult);
+                stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * fishBiome.baseResources.game * FORAGE_FISH_FACTOR * forageMult);
                 forageEvents.push({ emoji: '🐟' });
-              } else if (biome.baseResources.game * FORAGE_GAME_FACTOR >= biome.baseResources.plants * FORAGE_PLANTS_FACTOR) {
-                stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * biome.baseResources.game * FORAGE_GAME_FACTOR * forageMult);
-                forageEvents.push({ emoji: '🍖' });
-              } else {
-                stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * biome.baseResources.plants * FORAGE_PLANTS_FACTOR * forageMult);
+              } else if (biome.forageYieldLbsPerHour > 0) {
+                stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * 2 * biome.forageYieldLbsPerHour / FORAGE_TICKS_PER_HOUR * forageMult);
                 forageEvents.push({ emoji: '🌿' });
               }
             };
+            const waterBiome = fishBiome ?? biome;
             const gatherWater = () => {
               if (!needWater) return;
-              stats.water = Math.min(WATER_CAPACITY_GAL, stats.water + Math.random() * biome.baseResources.water * FORAGE_WATER_FACTOR * forageMult);
+              stats.water = Math.min(WATER_CAPACITY_GAL, stats.water + Math.random() * 2 * waterBiome.forageWaterGalPerHour / FORAGE_TICKS_PER_HOUR * forageMult);
               forageEvents.push({ emoji: '💧' });
             };
 
@@ -363,16 +393,22 @@ export function updateStats(
         if (!isDaylight(stats.daysTraveled)) {
           stats.activeAction = null;
         } else {
-          stats.food  = Math.max(0, stats.food  - gameDays * FORAGE_FOOD_DRAIN_PER_DAY);
-          stats.water = Math.max(0, stats.water - gameDays * FORAGE_WATER_DRAIN_PER_DAY);
+          { const f = stats.food, w = stats.water;
+            stats.food  = Math.max(0, stats.food  - gameDays * FORAGE_FOOD_DRAIN_PER_DAY);
+            stats.water = Math.max(0, stats.water - gameDays * FORAGE_WATER_DRAIN_PER_DAY);
+            stats.foodConsumed  += f - stats.food;
+            stats.waterConsumed += w - stats.water; }
           if (stats.activeAction.progressDays >= stats.activeAction.durationDays) {
             stats.activeAction = null;
           }
         }
       } else if (stats.activeAction.id === 'build_campfire') {
         // Campfire can be built at night.
-        stats.food  = Math.max(0, stats.food  - gameDays * FORAGE_FOOD_DRAIN_PER_DAY);
-        stats.water = Math.max(0, stats.water - gameDays * FORAGE_WATER_DRAIN_PER_DAY);
+        { const f = stats.food, w = stats.water;
+          stats.food  = Math.max(0, stats.food  - gameDays * FORAGE_FOOD_DRAIN_PER_DAY);
+          stats.water = Math.max(0, stats.water - gameDays * FORAGE_WATER_DRAIN_PER_DAY);
+          stats.foodConsumed  += f - stats.food;
+          stats.waterConsumed += w - stats.water; }
         if (stats.activeAction.progressDays >= stats.activeAction.durationDays) {
           stats.activeAction = null;
         }

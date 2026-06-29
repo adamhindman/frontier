@@ -163,6 +163,10 @@ export class MapPinManager {
     return this.pins.findIndex(p => p.tileX === tileX && p.tileY === tileY);
   }
 
+  findById(id: string): MapPin | undefined {
+    return this.pins.find(p => p.id === id);
+  }
+
   triggerEdit(index: number): void {
     this.editTriggers[index]?.();
   }

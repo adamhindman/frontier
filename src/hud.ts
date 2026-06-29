@@ -79,7 +79,10 @@ function totalBandSpace(): number {
 export function getTopBandHeight():    number { return Math.round(totalBandSpace() * 0.25); }
 export function getBottomBandHeight(): number { return totalBandSpace() - getTopBandHeight(); }
 
-export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?: () => void, onTogglePause?: () => void, onToggleQuests?: () => void, onQuestHover?: { enter: () => void; leave: () => void }): (stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging?: boolean, weatherStr?: string, isPaused?: boolean) => void {
+export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?: () => void, onTogglePause?: () => void, onToggleQuests?: () => void, onQuestHover?: { enter: () => void; leave: () => void }, onToggleLog?: () => void): {
+  update: (stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging?: boolean, weatherStr?: string, isPaused?: boolean, elevFt?: number, huntingMode?: boolean) => void;
+  showMessage: (msg: string) => void;
+} {
   // ── Top bar ────────────────────────────────────────────────────────────
   const topBar = document.createElement('div');
   topBar.style.cssText = `
@@ -162,7 +165,25 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
     questBtn.addEventListener('mouseleave', onQuestHover.leave);
   }
 
-  rightWrap.append(questBtn, pauseBtn);
+  const logBtn = document.createElement('button');
+  logBtn.title = 'Log (L)';
+  logBtn.textContent = '💬';
+  logBtn.style.cssText = `
+    background: none;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    color: #666;
+    font: 13px monospace;
+    line-height: 1;
+    padding: 2px 6px;
+    cursor: pointer;
+    pointer-events: auto;
+  `;
+  logBtn.addEventListener('mouseenter', () => { logBtn.style.color = '#bbb'; logBtn.style.borderColor = 'rgba(255,255,255,0.3)'; });
+  logBtn.addEventListener('mouseleave', () => { logBtn.style.color = '#666'; logBtn.style.borderColor = 'rgba(255,255,255,0.12)'; });
+  if (onToggleLog) logBtn.addEventListener('click', (e) => { e.stopPropagation(); onToggleLog(); });
+
+  rightWrap.append(logBtn, questBtn, pauseBtn);
 
   if (seed !== undefined) {
     const seedLabel = document.createElement('span');
@@ -258,16 +279,38 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
 
   const dayEl     = document.createElement('span');
   const milesEl   = document.createElement('span');
+  const altEl     = document.createElement('span');
   const tempRowEl = document.createElement('span');
 
   dayEl.style.cssText     = 'color: #aaa; font: 14px/1 monospace;';
   milesEl.style.cssText   = 'color: #888; font: 11px/1 monospace;';
+  altEl.style.cssText     = 'color: #888; font: 11px/1 monospace;';
   tempRowEl.style.cssText = 'color: #888; font: 11px/1 monospace;';
 
-  leftCol.append(dayEl, milesEl, tempRowEl);
+  leftCol.append(dayEl, milesEl, altEl, tempRowEl);
   bottomBar.appendChild(leftCol);
 
-  // Right: canoe indicator
+  // Right: inventory row — rifle, pelts, canoe (each a small stat widget)
+  const rightInventory = document.createElement('div');
+  rightInventory.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+    flex-shrink: 0;
+  `;
+
+  // Rifle widget
+  const rifleWidget = makeStatWidget('Rifle');
+  rifleWidget.iconWrap.textContent = '🔫';
+  rifleWidget.iconWrap.style.fontSize = '20px';
+
+  // Pelts widget
+  const peltsWidget = makeStatWidget('Pelts');
+  peltsWidget.iconWrap.textContent = '🧣';
+  peltsWidget.iconWrap.style.fontSize = '20px';
+
+  // Canoe indicator (clickable)
   const canoeIndicator = document.createElement('div');
   canoeIndicator.title = 'Drop canoe';
   canoeIndicator.style.cssText = `
@@ -275,7 +318,6 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
     flex-direction: column;
     align-items: center;
     gap: 3px;
-    margin-left: auto;
     flex-shrink: 0;
     cursor: pointer;
     pointer-events: auto;
@@ -309,7 +351,8 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
   canoeIndicator.addEventListener('mouseleave', () => { canoeIndicator.style.opacity = '1'; });
   if (onDropCanoe) canoeIndicator.addEventListener('click', onDropCanoe);
 
-  bottomBar.append(canoeIndicator);
+  rightInventory.append(rifleWidget.el, peltsWidget.el, canoeIndicator);
+  bottomBar.append(rightInventory);
 
   // ── Layout: set bar heights to match letterbox bands ───────────────────
   function layout() {
@@ -319,15 +362,29 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
   layout();
   window.addEventListener('resize', layout);
 
+  // ── Temp message (e.g. "Out of ammunition") ───────────────────────────
+  let tempMessage = '';
+  let tempMsgTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  function showMessage(msg: string) {
+    tempMessage = msg;
+    if (tempMsgTimeout) clearTimeout(tempMsgTimeout);
+    tempMsgTimeout = setTimeout(() => { tempMessage = ''; }, 2000);
+  }
+
   // ── Update (called every frame) ────────────────────────────────────────
   let prevWarmth = -1;
-  return function updateHud(stats: PlayerStats, timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging = false, weatherStr?: string, isPaused = false) {
+  function updateHud(stats: PlayerStats, _timeTicking: boolean, distanceStr: string, ambientTempF: number, portaging = false, weatherStr?: string, isPaused = false, elevFt?: number, huntingMode = false) {
     pauseBtn.textContent = isPaused ? '▶' : '⏸';
     pauseBtn.title = isPaused ? 'Resume (P)' : 'Pause (P)';
     dayEl.textContent     = formatTime(stats.daysTraveled);
     milesEl.textContent   = `${distanceStr} from start`;
+    altEl.textContent     = elevFt !== undefined ? `${elevFt.toLocaleString()} ft elevation` : '';
 
-    if (stats.activeAction) {
+    if (tempMessage) {
+      actionEl.textContent  = `· ${tempMessage}`;
+      stopBtn.style.display = 'none';
+    } else if (stats.activeAction) {
       if (isFinite(stats.activeAction.durationDays)) {
         const pct = Math.min(stats.activeAction.progressDays / stats.activeAction.durationDays, 1);
         actionEl.textContent = `· ${stats.activeAction.label} ${Math.round(pct * 100)}%`;
@@ -337,6 +394,9 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
       }
       const showStop = !isFinite(stats.activeAction.durationDays) || stats.activeAction.id.startsWith('build_');
       stopBtn.style.display = showStop ? 'inline-block' : 'none';
+    } else if (huntingMode) {
+      actionEl.textContent  = '· Hunting Mode 🔫';
+      stopBtn.style.display = 'none';
     } else {
       actionEl.textContent  = portaging ? '· Portaging 🛶' : '';
       stopBtn.style.display = 'none';
@@ -367,11 +427,16 @@ export function createHud(seed?: string, onStopAction?: () => void, onDropCanoe?
     moraleWidget.iconWrap.textContent = getMoraleEmoji(stats.morale);
     moraleWidget.bottom.textContent   = getMoraleLabel(stats.morale);
 
+    rifleWidget.bottom.textContent = `${stats.rifleAmmo}`;
+    peltsWidget.bottom.textContent = `${stats.pelts}`;
+
     if (stats.canoes > 0) {
       canoeIndicator.style.display = 'flex';
       canoeCount.textContent = stats.canoes > 1 ? `×${stats.canoes} Canoes` : 'Canoe';
     } else {
       canoeIndicator.style.display = 'none';
     }
-  };
+  }
+
+  return { update: updateHud, showMessage };
 }

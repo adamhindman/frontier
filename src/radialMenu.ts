@@ -40,6 +40,7 @@ export function createRadialMenu(
   camera: THREE.OrthographicCamera,
   getItems: (tileX: number, tileY: number) => RadialItem[],
   clickEnabled?: () => boolean,
+  onClose?: () => void,
 ) {
   // Outer container — fixed, full viewport, click-through by default.
   const container = document.createElement("div");
@@ -223,9 +224,11 @@ export function createRadialMenu(
   }
 
   function closeAll() {
+    const wasOpen = itemStack.length > 0;
     itemStack = [];
     container.style.display = 'none';
     panel.innerHTML = '';
+    if (wasOpen) onClose?.();
   }
 
   function closeTop() {
