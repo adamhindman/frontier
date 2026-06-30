@@ -16,6 +16,15 @@ export class HuntingOverlay {
   private crosshair: HTMLDivElement;
   private active = false;
 
+  // Raw mouse position (no wobble)
+  private mouseX = 0;
+  private mouseY = 0;
+
+  // Current wobble offset applied to crosshair (pixels, screen space)
+  private wobbleX = 0;
+  private wobbleY = 0;
+  private wobblePhase = 0;
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
 
@@ -64,8 +73,9 @@ export class HuntingOverlay {
 
     canvas.addEventListener('mousemove', (e) => {
       if (!this.active) return;
-      this.crosshair.style.left = `${e.clientX}px`;
-      this.crosshair.style.top  = `${e.clientY}px`;
+      this.mouseX = e.clientX;
+      this.mouseY = e.clientY;
+      // Crosshair position is updated in update() each frame, not here.
     });
   }
 
@@ -73,9 +83,32 @@ export class HuntingOverlay {
     this.active = active;
     this.canvas.style.cursor = active ? 'none' : '';
     this.crosshair.style.display = active ? 'block' : 'none';
+    if (!active) {
+      this.wobbleX = 0;
+      this.wobbleY = 0;
+      this.wobblePhase = 0;
+    }
   }
 
   isActive(): boolean { return this.active; }
+
+  getMouseScreenPos(): { x: number; y: number } {
+    return { x: this.mouseX, y: this.mouseY };
+  }
+
+  /**
+   * Advance wobble and reposition crosshair. Call every frame while active.
+   * amplitudePx: how many screen pixels the reticle can drift at most.
+   */
+  update(dtSec: number, amplitudePx: number) {
+    if (!this.active) return;
+    this.wobblePhase += dtSec;
+    // Two layers per axis at incommensurate frequencies — fast and hard to track.
+    this.wobbleX = amplitudePx * (Math.sin(this.wobblePhase * 8.3 + 0.5) + 0.4 * Math.sin(this.wobblePhase * 13.7 + 1.9));
+    this.wobbleY = amplitudePx * (Math.cos(this.wobblePhase * 6.1)       + 0.4 * Math.cos(this.wobblePhase * 11.3 + 0.8));
+    this.crosshair.style.left = `${this.mouseX + this.wobbleX}px`;
+    this.crosshair.style.top  = `${this.mouseY + this.wobbleY}px`;
+  }
 
   // Animate a bullet streak from screen point A to screen point B.
   fireBullet(fromX: number, fromY: number, toX: number, toY: number) {
@@ -105,11 +138,11 @@ export class HuntingOverlay {
     setTimeout(() => streak.remove(), 250);
   }
 
-  // Convert a mouse click event to tile coordinates. Returns null if outside canvas.
+  // Convert a mouse click to tile coordinates, applying current wobble offset.
   getClickTile(e: MouseEvent, camera: THREE.OrthographicCamera): { tileX: number; tileY: number } | null {
     const cr = getContentRect(this.canvas);
-    const lx = e.clientX - cr.x;
-    const ly = e.clientY - cr.y;
+    const lx = (e.clientX + this.wobbleX) - cr.x;
+    const ly = (e.clientY + this.wobbleY) - cr.y;
     if (lx < 0 || lx > cr.w || ly < 0 || ly > cr.h) return null;
     return canvasCoordsToTile(
       (lx / cr.w) * CANVAS_WIDTH,

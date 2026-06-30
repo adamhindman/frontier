@@ -118,6 +118,7 @@ export function createRadialMenu(
     renderedItems = displayItems;
 
     // Build new rows off-screen, then swap.
+    let badgeCounter = 0;
     const rows = displayItems.map((item, i) => {
       const hasChildren = !!item.children?.length;
       const isDisabled  = !!item.disabled;
@@ -145,9 +146,9 @@ export function createRadialMenu(
       `;
 
       if (!isDisabled && !isBack) {
-        // Number badge
+        // Number badge — counter excludes the back item so numbering starts at 1
         const badge = document.createElement("span");
-        badge.textContent = String(i + 1);
+        badge.textContent = String(++badgeCounter);
         badge.style.cssText = `
           display: inline-flex;
           align-items: center;
@@ -315,7 +316,9 @@ export function createRadialMenu(
 
     const num = parseInt(e.key, 10);
     if (!isNaN(num) && num >= 1) {
-      const row = getRows()[num - 1];
+      // If a back item is prepended, number keys map to the items after it.
+      const offset = renderedItems[0]?.label === '← Back' ? 1 : 0;
+      const row = getRows()[num - 1 + offset];
       if (row) { e.preventDefault(); row.click(); }
     }
   });

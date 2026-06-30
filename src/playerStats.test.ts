@@ -130,8 +130,8 @@ describe('updateStats build action', () => {
     const oneHourDelta = SECONDS_PER_DAY / 24;
     updateStats(stats, oneHourDelta, 0, plainsBiome);
 
-    // progressDays should have advanced by 1/24 of a day
-    expect(stats.activeAction?.progressDays).toBeCloseTo(1 / 24, 4);
+    // build_canoe runs 4× accelerated, so 1/24 real game-day → 4/24 progress
+    expect(stats.activeAction?.progressDays).toBeCloseTo(4 / 24, 4);
   });
 
   it('nulls the action when progressDays reaches durationDays', () => {
@@ -243,17 +243,150 @@ describe('updateStats forage action', () => {
   });
 });
 
+// ─── createStats — new fields ────────────────────────────────────────────────
+
+describe('createStats new fields', () => {
+  it('initializes rifleAmmo to 999', () => {
+    expect(createStats().rifleAmmo).toBe(999);
+  });
+
+  it('initializes pelts to 0', () => {
+    expect(createStats().pelts).toBe(0);
+  });
+
+  it('initializes all mileage breakdown fields to 0', () => {
+    const stats = createStats();
+    expect(stats.milesOverland).toBe(0);
+    expect(stats.milesPortaging).toBe(0);
+    expect(stats.milesByCanoe).toBe(0);
+  });
+
+  it('initializes foodSpoiled to 0', () => {
+    expect(createStats().foodSpoiled).toBe(0);
+  });
+});
+
+// ─── updateStats — food spoilage ─────────────────────────────────────────────
+
+describe('updateStats food spoilage', () => {
+  it('reduces food each time-tick', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    stats.food = 10;
+
+    updateStats(stats, SECONDS_PER_DAY / 4, 0, barrenBiome); // 0.25 days
+
+    expect(stats.food).toBeLessThan(10);
+  });
+
+  it('accumulates foodSpoiled', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    stats.food = 10;
+    stats.foodSpoiled = 0;
+
+    updateStats(stats, SECONDS_PER_DAY / 4, 0, barrenBiome);
+
+    expect(stats.foodSpoiled).toBeGreaterThan(0);
+  });
+
+  it('applies 10% rate when food is high enough for rate to exceed 1 lb/day floor', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    stats.food = 20; // 10% = 2 lb/day — above the 1 lb floor
+
+    updateStats(stats, SECONDS_PER_DAY, 0, barrenBiome); // 1 full game-day
+
+    // Expected spoilage: 10% of 20 = 2 lb — but food also drains from background metabolic,
+    // so just verify spoiled is in the 10%-ish range (not at the 1 lb floor)
+    expect(stats.foodSpoiled).toBeGreaterThan(1.5);
+  });
+
+  it('applies 1 lb/day floor when food is too low for 10% to exceed it', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    stats.food = 5; // 10% = 0.5 lb/day — below the 1 lb floor
+
+    // Use 0.5 days so expected floor spoilage is ~0.5 lb
+    updateStats(stats, SECONDS_PER_DAY / 2, 0, barrenBiome);
+
+    expect(stats.foodSpoiled).toBeGreaterThan(0.3); // well above zero (floor was applied)
+  });
+
+  it('does not spoil food when food is 0', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    stats.food = 0;
+    stats.foodSpoiled = 0;
+
+    updateStats(stats, SECONDS_PER_DAY, 0, barrenBiome);
+
+    expect(stats.foodSpoiled).toBe(0);
+  });
+});
+
+// ─── updateStats — mileage breakdown ─────────────────────────────────────────
+
+describe('updateStats mileage breakdown', () => {
+  it('counts overland miles when not in canoe and not portaging', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+    const before = stats.milesOverland;
+
+    updateStats(stats, 0, 10, barrenBiome, undefined, false, 70, false, undefined, false);
+
+    expect(stats.milesOverland).toBeGreaterThan(before);
+    expect(stats.milesPortaging).toBe(0);
+    expect(stats.milesByCanoe).toBe(0);
+  });
+
+  it('counts portaging miles when portaging flag is true', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+
+    updateStats(stats, 0, 10, barrenBiome, undefined, false, 70, false, undefined, true);
+
+    expect(stats.milesPortaging).toBeGreaterThan(0);
+    expect(stats.milesOverland).toBe(0);
+    expect(stats.milesByCanoe).toBe(0);
+  });
+
+  it('counts canoe miles when inCanoe is true', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+
+    updateStats(stats, 0, 10, barrenBiome, undefined, true, 70, false, undefined, false);
+
+    expect(stats.milesByCanoe).toBeGreaterThan(0);
+    expect(stats.milesOverland).toBe(0);
+    expect(stats.milesPortaging).toBe(0);
+  });
+
+  it('total milesTraveled equals sum of breakdown fields', () => {
+    const stats = createStats();
+    stats.daysTraveled = 12 / 24;
+
+    updateStats(stats, 0, 5, barrenBiome, undefined, false);   // overland
+    updateStats(stats, 0, 3, barrenBiome, undefined, true);    // canoe
+    updateStats(stats, 0, 2, barrenBiome, undefined, false, 70, false, undefined, true); // portaging
+
+    expect(stats.milesTraveled).toBeCloseTo(
+      stats.milesOverland + stats.milesPortaging + stats.milesByCanoe, 5
+    );
+  });
+});
+
 // ─── updateStats — warmth during rest ────────────────────────────────────────
 
 describe('updateStats warmth during rest', () => {
-  it('restores warmth to near 82 after a night resting in a shelter', () => {
+  it('restores warmth to near 82 after resting in a shelter (warmth ≥ 50 so rest is time-accelerated)', () => {
     const stats = createStats();
     stats.daysTraveled = 20 / 24; // 8 PM
-    stats.warmth = 30; // Cold
-    // Half-day rest: accelerated to complete in 1.5 real seconds
+    stats.warmth = 60; // Warm enough for rest-time acceleration
+    // Half-day rest: accelerated; realSecs = max(min(0.5,5),1)*1.5 = 1.5s
+    // So delta=1.5s → gameDays = (1.5 * 0.5) / 1.5 = 0.5 days
     stats.activeAction = { id: 'rest', label: 'Resting', durationDays: 0.5, progressDays: 0 };
 
-    // Pass delta = 1.5s so gameDays = (1.5 * 0.5) / 1.5 = 0.5 days
     updateStats(stats, 1.5, 0, barrenBiome, undefined, false, 28, 'shelter');
 
     expect(stats.warmth).toBeCloseTo(82, 0);

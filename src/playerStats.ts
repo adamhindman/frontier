@@ -31,8 +31,12 @@ export interface PlayerStats {
   energy: number; // 0–100
   warmth: number; // 0–100; drops in cold, restored by campfire/shelter
   milesTraveled: number;
+  milesOverland: number;    // on foot, no canoe carried
+  milesPortaging: number;   // on foot, carrying a canoe
+  milesByCanoe: number;     // paddling on water
   foodConsumed: number;  // cumulative lbs eaten; diff at midnight for daily total
   waterConsumed: number; // cumulative gal drunk
+  foodSpoiled: number;   // cumulative lbs lost to spoilage
   daysTraveled: number;
   daysTraveledSinceRest: number; // resets when a ≥1-day rest completes
   statusConditions: StatusCondition[];
@@ -73,6 +77,8 @@ export type ForageEvent = { emoji: string; timber?: number };
 
 const BACKGROUND_FOOD_DRAIN_PER_DAY  = 0.9;  // lbs/day — always-on metabolic baseline
 const BACKGROUND_WATER_DRAIN_PER_DAY = 0.5;  // gal/day
+const SPOILAGE_RATE_PER_DAY = 0.10; // 10% of current stock per day
+const SPOILAGE_MIN_PER_DAY  = 1.0;  // floor: always lose at least this much if food > 0
 
 const REST_FOOD_DRAIN_PER_DAY   = 3.4;  // lbs/day (on top of background → ~4.3 total)
 const REST_WATER_DRAIN_PER_DAY  = 1.0;  // gal/day (on top of background → ~1.5 total)
@@ -149,8 +155,12 @@ export function createStats(): PlayerStats {
     energy: 100,
     warmth: 100,
     milesTraveled: 0,
+    milesOverland: 0,
+    milesPortaging: 0,
+    milesByCanoe: 0,
     foodConsumed: 0,
     waterConsumed: 0,
+    foodSpoiled: 0,
     daysTraveled: 9 / 24,
     daysTraveledSinceRest: 0,
     statusConditions: [],
@@ -188,7 +198,11 @@ export function updateStats(
   const timeTicking = true; // clock runs continuously; callers pass delta=0 to pause
   const forageEvents: ForageEvent[] = [];
 
-  stats.milesTraveled += tilesMoved * MILES_PER_TILE;
+  const milesThisTick = tilesMoved * MILES_PER_TILE;
+  stats.milesTraveled += milesThisTick;
+  if (inCanoe)        stats.milesByCanoe   += milesThisTick;
+  else if (portaging) stats.milesPortaging += milesThisTick;
+  else                stats.milesOverland  += milesThisTick;
 
   if (isMoving) {
     const foodBefore = stats.food, waterBefore = stats.water;
@@ -236,6 +250,14 @@ export function updateStats(
       stats.water = Math.max(0, stats.water - gameDays * BACKGROUND_WATER_DRAIN_PER_DAY);
       stats.foodConsumed  += f - stats.food;
       stats.waterConsumed += w - stats.water; }
+
+    // Food spoilage — percentage-based with a 1 lb/day floor.
+    if (stats.food > 0) {
+      const before = stats.food;
+      const rate = Math.max(SPOILAGE_MIN_PER_DAY, stats.food * SPOILAGE_RATE_PER_DAY);
+      stats.food = Math.max(0, stats.food - gameDays * rate);
+      stats.foodSpoiled += before - stats.food;
+    }
 
     // Warmth changes only while the clock is ticking.
     if (warming === 'campfire') {

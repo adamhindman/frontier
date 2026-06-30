@@ -20,6 +20,7 @@ interface AnimalDef {
   furPelts: number;     // pelt/hide yield (0 = none — birds, crustaceans, etc.)
   size: number;         // emoji font-size in px (base 18px = medium animal ~deer)
   hp: number;           // hits to kill (1 = one-shot)
+  prey: boolean;        // true = flees from gunshots; false = predator, holds ground
   nocturnal?: boolean;  // only active at night
 }
 
@@ -28,30 +29,30 @@ interface AnimalDef {
 //   furPelts: 0 for feathered/shelled animals; 1 for a single pelt/hide
 
 const ANIMAL_DEFS: AnimalDef[] = [
-  // Common game
-  { emoji: '🦌', name: 'Deer',         biomes: ['plains','forest','hills'],              rarity: 'common',   fleeRadius: 5,  fleeSpeed: 5.5, wanderSpeed: 0.8,  meatLbs:   60, furPelts: 1, size: 24, hp: 1 },
-  { emoji: '🐇', name: 'Rabbit',       biomes: ['plains','forest','hills','beach'],       rarity: 'common',   fleeRadius: 4,  fleeSpeed: 6.5, wanderSpeed: 1.2,  meatLbs:    2, furPelts: 1, size: 12, hp: 1 },
-  { emoji: '🐗', name: 'Boar',         biomes: ['forest','swamp','hills'],                rarity: 'common',   fleeRadius: 3,  fleeSpeed: 4.5, wanderSpeed: 0.6,  meatLbs:   75, furPelts: 1, size: 18, hp: 1 },
-  { emoji: '🦃', name: 'Turkey',       biomes: ['plains','forest'],                       rarity: 'common',   fleeRadius: 4,  fleeSpeed: 4.5, wanderSpeed: 0.7,  meatLbs:    8, furPelts: 0, size: 16, hp: 1 },
-  { emoji: '🦆', name: 'Duck',         biomes: ['beach','swamp'],                         rarity: 'common',   fleeRadius: 5,  fleeSpeed: 5.0, wanderSpeed: 1.0,  meatLbs:    2, furPelts: 0, size: 13, hp: 1 },
-  // Wildlife
-  { emoji: '🐻', name: 'Bear',         biomes: ['forest','hills','mountains'],             rarity: 'uncommon', fleeRadius: 0,  fleeSpeed: 0,   wanderSpeed: 0.5,  meatLbs:  200, furPelts: 1, size: 26, hp: 2 },
-  { emoji: '🦊', name: 'Fox',          biomes: ['plains','forest','hills','snow'],         rarity: 'uncommon', fleeRadius: 6,  fleeSpeed: 5.5, wanderSpeed: 1.0,  meatLbs:    5, furPelts: 1, size: 15, hp: 1 },
-  { emoji: '🐺', name: 'Wolf',         biomes: ['forest','hills','mountains','snow'],      rarity: 'uncommon', fleeRadius: 5,  fleeSpeed: 5.5, wanderSpeed: 0.8,  meatLbs:   40, furPelts: 1, size: 18, hp: 1, nocturnal: true },
-  { emoji: '🦅', name: 'Eagle',        biomes: ['mountains','hills','snow'],               rarity: 'uncommon', fleeRadius: 8,  fleeSpeed: 7.0, wanderSpeed: 1.5,  meatLbs:    3, furPelts: 0, size: 16, hp: 1 },
-  { emoji: '🦬', name: 'Bison',        biomes: ['plains'],                                rarity: 'uncommon', fleeRadius: 4,  fleeSpeed: 4.0, wanderSpeed: 0.4,  meatLbs:  600, furPelts: 1, size: 28, hp: 2 },
-  { emoji: '🐊', name: 'Crocodile',    biomes: ['swamp'],                                 rarity: 'uncommon', fleeRadius: 0,  fleeSpeed: 0,   wanderSpeed: 0.3,  meatLbs:  100, furPelts: 1, size: 22, hp: 2 },
+  // Common prey
+  { emoji: '🦌', name: 'Deer',         biomes: ['plains','forest','hills'],              rarity: 'common',   fleeRadius: 5,  fleeSpeed: 9.0, wanderSpeed: 0.8,  meatLbs:   60, furPelts: 1, size: 24, hp: 1, prey: true  },
+  { emoji: '🐇', name: 'Rabbit',       biomes: ['plains','forest','hills','beach'],       rarity: 'common',   fleeRadius: 4,  fleeSpeed: 10.0, wanderSpeed: 1.2, meatLbs:    2, furPelts: 1, size: 12, hp: 1, prey: true  },
+  { emoji: '🐗', name: 'Boar',         biomes: ['forest','swamp','hills'],                rarity: 'common',   fleeRadius: 3,  fleeSpeed: 7.5, wanderSpeed: 0.6,  meatLbs:   75, furPelts: 1, size: 18, hp: 1, prey: true  },
+  { emoji: '🦃', name: 'Turkey',       biomes: ['plains','forest'],                       rarity: 'common',   fleeRadius: 4,  fleeSpeed: 7.5, wanderSpeed: 0.7,  meatLbs:    8, furPelts: 0, size: 16, hp: 1, prey: true  },
+  { emoji: '🦆', name: 'Duck',         biomes: ['beach','swamp'],                         rarity: 'common',   fleeRadius: 5,  fleeSpeed: 8.0, wanderSpeed: 1.0,  meatLbs:    2, furPelts: 0, size: 13, hp: 1, prey: true  },
+  // Predators
+  { emoji: '🐻', name: 'Bear',         biomes: ['forest','hills','mountains'],             rarity: 'uncommon', fleeRadius: 0,  fleeSpeed: 0,   wanderSpeed: 0.5,  meatLbs:  200, furPelts: 1, size: 26, hp: 2, prey: false },
+  { emoji: '🦊', name: 'Fox',          biomes: ['plains','forest','hills','snow'],         rarity: 'uncommon', fleeRadius: 6,  fleeSpeed: 9.0, wanderSpeed: 1.0,  meatLbs:    5, furPelts: 1, size: 15, hp: 1, prey: true  },
+  { emoji: '🐺', name: 'Wolf',         biomes: ['forest','hills','mountains','snow'],      rarity: 'uncommon', fleeRadius: 5,  fleeSpeed: 5.5, wanderSpeed: 0.8,  meatLbs:   40, furPelts: 1, size: 18, hp: 1, prey: false, nocturnal: true },
+  { emoji: '🦅', name: 'Eagle',        biomes: ['mountains','hills','snow'],               rarity: 'uncommon', fleeRadius: 8,  fleeSpeed: 11.0, wanderSpeed: 1.5, meatLbs:    3, furPelts: 0, size: 16, hp: 1, prey: true  },
+  { emoji: '🦬', name: 'Bison',        biomes: ['plains'],                                rarity: 'uncommon', fleeRadius: 4,  fleeSpeed: 7.0, wanderSpeed: 0.4,  meatLbs:  600, furPelts: 1, size: 28, hp: 2, prey: true  },
+  { emoji: '🐊', name: 'Crocodile',    biomes: ['swamp'],                                 rarity: 'uncommon', fleeRadius: 0,  fleeSpeed: 0,   wanderSpeed: 0.3,  meatLbs:  100, furPelts: 1, size: 22, hp: 2, prey: false },
   // Rare
-  { emoji: '🐆', name: 'Snow Leopard', biomes: ['mountains','snow'],                      rarity: 'rare',     fleeRadius: 10, fleeSpeed: 6.5, wanderSpeed: 1.0,  meatLbs:   30, furPelts: 1, size: 20, hp: 1 },
-  { emoji: '🦁', name: 'Lion',         biomes: ['desert','plains'],                       rarity: 'rare',     fleeRadius: 0,  fleeSpeed: 0,   wanderSpeed: 0.6,  meatLbs:  150, furPelts: 1, size: 24, hp: 2 },
-  { emoji: '🦜', name: 'Parrot',       biomes: ['forest','swamp'],                        rarity: 'rare',     fleeRadius: 6,  fleeSpeed: 6.0, wanderSpeed: 1.0,  meatLbs:    0, furPelts: 0, size: 13, hp: 1 },
-  { emoji: '🦀', name: 'Crab',         biomes: ['beach'],                                 rarity: 'rare',     fleeRadius: 3,  fleeSpeed: 3.5, wanderSpeed: 0.5,  meatLbs:    1, furPelts: 0, size: 13, hp: 1 },
+  { emoji: '🐆', name: 'Snow Leopard', biomes: ['mountains','snow'],                      rarity: 'rare',     fleeRadius: 10, fleeSpeed: 6.5, wanderSpeed: 1.0,  meatLbs:   30, furPelts: 1, size: 20, hp: 1, prey: false },
+  { emoji: '🦁', name: 'Lion',         biomes: ['desert','plains'],                       rarity: 'rare',     fleeRadius: 0,  fleeSpeed: 0,   wanderSpeed: 0.6,  meatLbs:  150, furPelts: 1, size: 24, hp: 2, prey: false },
+  { emoji: '🦜', name: 'Parrot',       biomes: ['forest','swamp'],                        rarity: 'rare',     fleeRadius: 6,  fleeSpeed: 9.0, wanderSpeed: 1.0,  meatLbs:    0, furPelts: 0, size: 13, hp: 1, prey: true  },
+  { emoji: '🦀', name: 'Crab',         biomes: ['beach'],                                 rarity: 'rare',     fleeRadius: 3,  fleeSpeed: 6.0, wanderSpeed: 0.5,  meatLbs:    1, furPelts: 0, size: 13, hp: 1, prey: true  },
   // Mythical
-  { emoji: '🦄', name: 'Unicorn',      biomes: ['plains','forest'],                       rarity: 'mythical', fleeRadius: 12, fleeSpeed: 7.5, wanderSpeed: 1.2,  meatLbs:  440, furPelts: 1, size: 22, hp: 1 },
-  { emoji: '🐉', name: 'Dragon',       biomes: ['mountains','snow'],                      rarity: 'mythical', fleeRadius: 0,  fleeSpeed: 0,   wanderSpeed: 0.8,  meatLbs: 1000, furPelts: 1, size: 36, hp: 5 },
-  { emoji: '🦖', name: 'T-Rex',        biomes: ['forest','swamp'],                        rarity: 'mythical', fleeRadius: 0,  fleeSpeed: 0,   wanderSpeed: 0.7,  meatLbs: 5000, furPelts: 1, size: 40, hp: 8 },
-  { emoji: '👹', name: 'Troll',        biomes: ['forest','hills'],                        rarity: 'mythical', fleeRadius: 0,  fleeSpeed: 0,   wanderSpeed: 0.4,  meatLbs:   80, furPelts: 1, size: 30, hp: 2, nocturnal: true },
-  { emoji: '🫈', name: 'Bigfoot',      biomes: ['forest','mountains','snow'],             rarity: 'mythical', fleeRadius: 15, fleeSpeed: 7.5, wanderSpeed: 1.0,  meatLbs:  150, furPelts: 1, size: 32, hp: 3 },
+  { emoji: '🦄', name: 'Unicorn',      biomes: ['plains','forest'],                       rarity: 'mythical', fleeRadius: 12, fleeSpeed: 12.0, wanderSpeed: 1.2, meatLbs:  440, furPelts: 1, size: 22, hp: 1, prey: true  },
+  { emoji: '🐉', name: 'Dragon',       biomes: ['mountains','snow'],                      rarity: 'mythical', fleeRadius: 0,  fleeSpeed: 0,   wanderSpeed: 0.8,  meatLbs: 1000, furPelts: 1, size: 36, hp: 5, prey: false },
+  { emoji: '🦖', name: 'T-Rex',        biomes: ['forest','swamp'],                        rarity: 'mythical', fleeRadius: 0,  fleeSpeed: 0,   wanderSpeed: 0.7,  meatLbs: 5000, furPelts: 1, size: 40, hp: 8, prey: false },
+  { emoji: '👹', name: 'Troll',        biomes: ['forest','hills'],                        rarity: 'mythical', fleeRadius: 0,  fleeSpeed: 0,   wanderSpeed: 0.4,  meatLbs:   80, furPelts: 1, size: 30, hp: 2, prey: false, nocturnal: true },
+  { emoji: '🫈', name: 'Bigfoot',      biomes: ['forest','mountains','snow'],             rarity: 'mythical', fleeRadius: 15, fleeSpeed: 11.0, wanderSpeed: 1.0, meatLbs:  150, furPelts: 1, size: 32, hp: 3, prey: true  },
 ];
 
 export const RIFLE_RANGE = 10; // tiles
@@ -215,6 +216,19 @@ export class AnimalManager {
     }
 
     return { endX: ox + dx * bestT, endY: oy + dy * bestT };
+  }
+
+  // Startle all visible prey animals — call after firing a shot.
+  scareAll(playerX: number, playerY: number) {
+    for (const a of this.animals) {
+      if (a.dead || a.hidden || !a.def.prey) continue;
+      const dx = a.x - playerX, dy = a.y - playerY;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      a.fleeing = true;
+      a.targetX = a.x + (dx / dist) * 40;
+      a.targetY = a.y + (dy / dist) * 40;
+      a.wanderTimer = WANDER_RETARGET;
+    }
   }
 
   // Collect a dead animal within 1 tile of the given tile center.

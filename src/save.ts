@@ -67,6 +67,10 @@ export function loadGame(seed: string): SaveData | null {
     if (data.version !== SAVE_VERSION) return null;
     data.stats.foodConsumed  ??= 0;
     data.stats.waterConsumed ??= 0;
+    data.stats.foodSpoiled   ??= 0;
+    data.stats.milesOverland  ??= 0;
+    data.stats.milesPortaging ??= 0;
+    data.stats.milesByCanoe   ??= 0;
     return data;
   } catch {
     return null;

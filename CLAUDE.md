@@ -99,11 +99,20 @@ Lightning strikes are possible during thunderstorms above elevation 0.65, dealin
 `PlayerStats` fields:
 - `health` (0–100), `energy` (0–100), `morale` (0–100, displayed as adjective)
 - `warmth` (0–100) — drops in cold weather, restored by campfire/shelter
-- `food` (lbs), `water` (gal) — capacities: `FOOD_CAPACITY_LBS = 30`, `WATER_CAPACITY_GAL = 10`
-- `timber`, `minerals` — harvested resources; capacities: `TIMBER_CAPACITY = 50`, `MINERALS_CAPACITY = 50`
+- `food` (lbs), `water` (gal) — capacities: `FOOD_CAPACITY_LBS = 20`, `WATER_CAPACITY_GAL = 10`
+- `minerals` — harvested minerals; capacity: `MINERALS_CAPACITY = 50`. Timber is NOT in inventory — it drops as world pile objects.
 - `canoes` — completed canoes in inventory
+- `rifleAmmo` — rounds remaining (starts at 999; decremented on fire)
+- `pelts` — fur pelts collected from kills; no capacity cap
 - `daysTraveled`, `daysTraveledSinceRest`, `milesTraveled`
+- `milesOverland` — miles traveled on foot without carrying a canoe
+- `milesPortaging` — miles traveled on foot while carrying a canoe overland
+- `milesByCanoe` — miles traveled paddling on water
+- `foodConsumed`, `waterConsumed` — cumulative totals for end-screen stats
+- `foodSpoiled` — cumulative lbs lost to daily spoilage; diffed at midnight for activity log
 - `statusConditions: StatusCondition[]`, `activeAction: ActiveAction | null`
+
+**Food spoilage:** Each time-tick loses `max(SPOILAGE_MIN_PER_DAY=1, food × SPOILAGE_RATE_PER_DAY=0.10)` lbs/day. The daily spoiled amount is shown in the activity log entry at midnight (omitted if < 0.1 lb).
 
 Morale labels: Despair (0–20), Ruined (21–40), Weary (41–60), Resolute (61–80), Elated (81–100).
 
@@ -165,21 +174,40 @@ Named locations placed during survey mode. Each `MapPin` stores `{id, tileX, til
 
 Lightweight event-driven quest engine. `QuestManager.notify(eventType, payload)` dispatches to all active quests; handlers registered with `registerQuestType(type, handler)` check completion. Built-in type: `find_and_name` — completes when a specific map pin is renamed. Quest panel toggled with `Q`. Quests are saved/restored.
 
+**Ruins quest chain:** Quests to find and name ruins escalate in distance: leg 1 = ~15 mi, leg N = `15 * 3^(N-1)` miles, each with a ±15% band. `ruinsQuestCount` is derived on load from existing quest IDs (`quest_ruins_N` pattern) so the chain resumes correctly after save/reload. The next quest is placed immediately on completion (before showing the congratulations screen) so hot-reload can't break the chain.
+
+**Congratulations screen** (`showQuestComplete`): displays the explored city name ("You explored [name]"), then a two-column stat table — miles traveled with overland/portaging/canoe breakdown (sub-rows omitted if zero), plus food consumed/spoiled and water consumed. Layout uses `justify-content: space-between` flex rows.
+
 ### Ruins (`ruinSprites.ts`, `RuinSpriteManager`)
 
 Gray rectangle footprints scattered around world landmarks. `scatter(cx, cy, count, rng)` places 1–2 tile footprints in a radius around a center tile. Repositioned each frame like other DOM overlay systems.
 
 ### Activity log (`activityLog.ts`)
 
-Scrollable panel (toggled with `L`) showing per-day recap entries ("Day 3: 4.2 miles traveled"). Entries are added at midnight each in-game day. Panel closes on click-outside or Escape.
+Scrollable panel (toggled with `L`) showing per-day recap entries ("Day 3: 4.2 miles traveled, · X.X lbs spoiled"). Entries are added at midnight each in-game day. Food spoiled is included only if ≥ 0.1 lb. Panel closes on click-outside or Escape.
+
+### Hunting (`hunting.ts`, `HuntingOverlay`)
+
+`HuntingOverlay` manages the rifle hunting mode. Toggle with **Shift**; click to fire.
+
+- `update(dtSec, amplitudePx)` — called every frame; advances the wobble phase and repositions the crosshair using two incommensurate sinusoid pairs per axis for erratic motion: `wobbleX = A*(sin(t*8.3+0.5) + 0.4*sin(t*13.7+1.9))`, `wobbleY = A*(cos(t*6.1) + 0.4*cos(t*11.3+0.8))`. Amplitude scales with pixel distance from player to target.
+- `getClickTile()` — applies current wobble offset to the click coordinates, so visual crosshair and effective aim always match.
+- `getMouseScreenPos()` — raw mouse position without wobble (used for amplitude computation).
+- `setActive(false)` — resets wobble state.
+
+`RIFLE_RANGE = 10` tiles. Firing costs 1 `rifleAmmo`. Kills add `meatLbs` to `stats.food` and `furPelts` to `stats.pelts`. When a shot fires, `animals.scareAll(px, py)` is called — all prey animals flee 40 tiles away at their flee speed.
 
 ### Animals (`animals.ts`, `AnimalManager`, `FishJumpEffect`)
 
-Non-deterministic animals roam the map as DOM emoji overlays. Each `AnimalDef` specifies biomes, rarity, flee radius/speed, wander speed, `meatLbs`, and `furPelts`. Hover shows a tooltip with name, meat yield, and fur yield.
+Non-deterministic animals roam the map as DOM emoji overlays. Each `AnimalDef` specifies biomes, rarity, flee radius/speed, wander speed, `meatLbs`, `furPelts`, `size`, `hp`, and `prey`.
 
 **Roster by rarity:** common (🦌🐇🐗🦃🦆), uncommon (🐻🦊🐺🦅🦬🐊), rare (🐆🦁🦜🦀), mythical (🦄🐉🦖👹🫈). Wolves and Trolls are `nocturnal` — only active at night. Animals with `fleeRadius > 0` run away from the player when within range.
 
-**Spawn/despawn:** Animals spawn 28–42 tiles from the player (off every screen edge) and despawn at 50 tiles. Up to 80 animals exist at once. Weighted by rarity (common:100, uncommon:20, rare:4, mythical:0.3).
+**Prey vs predator:** `prey: true` animals (deer, rabbit, boar, turkey, duck, fox, eagle, bison, parrot, crab, unicorn, bigfoot) flee when `scareAll()` is called. `prey: false` animals (bear, wolf, crocodile, snow leopard, lion, dragon, T-Rex, troll) hold their ground. Prey flee speeds are substantially higher than their normal flee-from-player speeds.
+
+**Spawn/despawn:** Animals spawn 28–42 tiles from the player (off every screen edge) and despawn at 50 tiles. Up to 40 animals exist at once. Weighted by rarity (common:100, uncommon:20, rare:4, mythical:0.3).
+
+`scareAll(playerX, playerY)` — scatters all living, visible prey animals 40 tiles away from the player at their flee speed.
 
 `FishJumpEffect` fires a brief 🐟 arc animation from a nearby water tile every ~8 seconds.
 
@@ -193,11 +221,14 @@ Stop button appears for infinite-duration actions and build actions. Extend the 
 
 Stack-based nested radial menu. Open with **Space**; Escape cancels. Number keys 1–9 activate buttons. `getItems` callback is evaluated at open time — check current state inside it. Third parameter `onClose?: () => void` fires only when the menu was actually open (not on every `closeAll()` call — important, since `closeAll()` is called every frame when the player moves).
 
+**Hotkey numbering:** The "← Back" item in submenus is never assigned a number badge. A separate `badgeCounter` (distinct from row index `i`) is incremented only for non-back, non-disabled items. The number key handler offsets past the Back row so key `1` always hits the first real item.
+
 Context-sensitive disabling rules:
 - **Rest**: disabled on water, above treeline
 - **Forage, Harvest**: disabled at night; forage disabled in shelter
 - **Survey**: disabled at night, in shelter
 - **Build**: disabled at night; sub-items show "Resume X" if an unfinished structure exists at the player's tile
+- **Resume Canoe / Resume Shelter**: appear as top-level items when standing on an unfinished structure of that type
 
 ### Keyboard shortcuts
 
@@ -210,6 +241,7 @@ Context-sensitive disabling rules:
 | Q | Toggle quest panel |
 | L | Toggle activity log |
 | D | Drop canoe (if carrying one and on land) |
+| Shift | Toggle hunting mode (rifle) |
 
 ### Tile inspector (`tileInspector.ts`, `coordinates.ts`)
 
@@ -245,12 +277,11 @@ Animal constants in `animals.ts`: `MAX_ANIMALS`, `SPAWN_RADIUS_MIN/MAX`, `DESPAW
 ## Tests
 
 - `coordinates.test.ts` — `canvasCoordsToTile()` with various camera positions
-- `playerStats.test.ts` — `getMoraleLabel()` boundaries, `getWeightMultiplier()`, `createStats()` field initialization, `updateStats()` build action (drain + completion + night stop), forage action (drain, hourly gain, fishing with `fishBiome`), health/morale regeneration
+- `playerStats.test.ts` — `getMoraleLabel()` boundaries, `getWeightMultiplier()`, `createStats()` field initialization (including `rifleAmmo`, `pelts`, mileage breakdown, `foodSpoiled`), `updateStats()` build action (drain + completion + night stop), forage action (drain, hourly gain, fishing with `fishBiome`), food spoilage (rate, floor, accumulation, zero-food case), mileage breakdown (overland / portaging / canoe), health/morale regeneration
 - `biomes.test.ts` — `getBiome()` elevation thresholds, river/lake overrides, water detection
 
 ## Planned features
 
-- Hunting mechanic (animals already on map with meat/fur yields defined)
 - Fog of war
 - Status conditions wired to gameplay effects
 - More quest types beyond `find_and_name`

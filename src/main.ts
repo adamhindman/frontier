@@ -198,6 +198,33 @@ const radialMenu = createRadialMenu(
     );
     const biomeTimber = BIOMES[tileBiome].baseResources.timber;
     const inShelter = structures.playerInCompletedShelter(ptx, pty);
+
+    // Check for unfinished structures on the player's tile (for top-level resume buttons).
+    const resumeCanoeIdx    = structures.findUnfinished(ptx, pty, 'canoe');
+    const resumeShelterIdx  = structures.findUnfinished(ptx, pty, 'shelter');
+    const resumeCanoeItem = resumeCanoeIdx >= 0 ? {
+      label: 'Resume Canoe',
+      disabled: !daylight,
+      action: () => {
+        const cfg = STRUCTURE_CONFIGS.canoe;
+        const timberPerHour = cfg.timberCost / cfg.totalHours;
+        const savedProgress = structures.getProgressDays(resumeCanoeIdx);
+        if (savedProgress >= cfg.totalHours / 24) { structures.complete(resumeCanoeIdx, stats); }
+        else { stats.activeAction = { id: 'build_canoe', label: 'Building canoe', durationDays: cfg.totalHours / 24, progressDays: savedProgress, structureIndex: resumeCanoeIdx, timberPerHour }; }
+      },
+    } : null;
+    const resumeShelterItem = resumeShelterIdx >= 0 ? {
+      label: 'Resume Shelter',
+      disabled: !daylight,
+      action: () => {
+        const cfg = STRUCTURE_CONFIGS.shelter;
+        const timberPerHour = cfg.timberCost / cfg.totalHours;
+        const savedProgress = structures.getProgressDays(resumeShelterIdx);
+        if (savedProgress >= cfg.totalHours / 24) { structures.complete(resumeShelterIdx, stats); }
+        else { stats.activeAction = { id: 'build_shelter', label: 'Building shelter', durationDays: cfg.totalHours / 24, progressDays: savedProgress, structureIndex: resumeShelterIdx, timberPerHour }; }
+      },
+    } : null;
+
     return [
       {
         label: "Rest Until Dawn",
@@ -267,6 +294,8 @@ const radialMenu = createRadialMenu(
         disabled: onWater || aboveTreeline || inShelter,
         action: () => placeCampfire(ptx, pty, 2),
       },
+      ...(resumeCanoeItem   ? [resumeCanoeItem]   : []),
+      ...(resumeShelterItem ? [resumeShelterItem] : []),
       {
         label: "Build",
         children: (() => {
@@ -472,6 +501,7 @@ renderer.domElement.addEventListener("click", (e) => {
   const ndx = dx / len, ndy = dy / len;
 
   const result = animals.fireRay(player.tileX, player.tileY, ndx, ndy, RIFLE_RANGE);
+  animals.scareAll(player.tileX, player.tileY);
   stats.rifleAmmo--;
 
   // Bullet streak: player screen pos → endpoint screen pos
@@ -578,9 +608,10 @@ dailyRecapText.style.cssText =
 dailyRecapEl.appendChild(dailyRecapText);
 document.body.appendChild(dailyRecapEl);
 
-let milesAtLastMidnight = 0; // set after load
-let foodAtLastMidnight  = 0;
-let waterAtLastMidnight = 0;
+let milesAtLastMidnight    = 0; // set after load
+let foodAtLastMidnight     = 0;
+let waterAtLastMidnight    = 0;
+let foodSpoiledAtLastMidnight = 0;
 let lastKnownDay = -1; // set after load; -1 means not yet initialized
 let hasRecapData = false;
 
@@ -699,16 +730,22 @@ const quests = new QuestManager({
     const ddx = curX - prevRuinsTileX, ddy = curY - prevRuinsTileY;
     const forwardBearing = ((Math.atan2(ddx, -ddy) * 180 / Math.PI) + 360) % 360;
 
-    showQuestComplete(q, () => {
-      prevRuinsTileX = curX;
-      prevRuinsTileY = curY;
-      placeRuinsQuest(curX, curY, forwardBearing, ruinsQuestCount++);
-    });
+    // Place the next quest immediately — don't gate it on the screen being dismissed.
+    prevRuinsTileX = curX;
+    prevRuinsTileY = curY;
+    placeRuinsQuest(curX, curY, forwardBearing, ruinsQuestCount++);
+
+    showQuestComplete(q, pendingCityName || completedPin?.name || 'the ruins', () => {});
   },
 });
 const questPanel = createQuestPanel(quests);
-mapPins.onRename = (pinId, newName) =>
+// Capture the name here — onComplete fires synchronously inside notify, so this
+// is always the name that triggered the quest completion.
+let pendingCityName = '';
+mapPins.onRename = (pinId, newName) => {
+  pendingCityName = newName;
   quests.notify("pin_renamed", { pinId, newName });
+};
 
 // --- Persistence ---
 let startTileX = Math.floor(player.tileX);
@@ -800,8 +837,8 @@ if (save?.mapPins === undefined) {
     return (ruinsSeed >>> 0) / 0x100000000;
   };
 
-  const RUINS_MIN_MILES = 10;
-  const RUINS_MAX_MILES = 15;
+  const RUINS_MIN_MILES = 15 * 0.85;
+  const RUINS_MAX_MILES = 15 * 1.15;
   const WATER_BIOMES = new Set(["deep_water", "shallow_water"]);
   let rtx = startTileX,
     rty = startTileY;
@@ -875,17 +912,23 @@ let prevRuinsTileX = startTileX;
 let prevRuinsTileY = startTileY;
 let lastRuinsTileX = startTileX; // updated each time a ruins is placed
 let lastRuinsTileY = startTileY;
-let ruinsQuestCount = 1; // quest_ruins_0 already placed above
+// Derive the next quest index from however many ruins quests have already been placed
+// (both complete and active). This survives save/reload correctly.
+let ruinsQuestCount = quests.getAll().reduce((max, q) => {
+  const m = q.id.match(/^quest_ruins_(\d+)$/);
+  return m ? Math.max(max, parseInt(m[1]) + 1) : max;
+}, 1);
 
-// Reads lastRuinsTile from the initial placement above.
+// Seed lastRuinsTile from the most recently placed ruins pin.
 {
-  const pin = mapPins.findById('ruins_0');
-  if (pin) { lastRuinsTileX = pin.tileX; lastRuinsTileY = pin.tileY; }
+  const latestPin = mapPins.findById(`ruins_${ruinsQuestCount - 1}`)
+    ?? mapPins.findById('ruins_0');
+  if (latestPin) { lastRuinsTileX = latestPin.tileX; lastRuinsTileY = latestPin.tileY; }
 }
 
 function placeRuinsQuest(fromTileX: number, fromTileY: number, forwardBearingDeg: number, questIndex: number) {
   // Distance grows with each quest: ~20, ~44, ~97, ~213, ~469 miles…
-  const targetMiles  = 20 * Math.pow(2.2, questIndex - 1);
+  const targetMiles  = 15 * Math.pow(3, questIndex - 1);
   const RUINS_MIN_MILES = targetMiles * 0.85;
   const RUINS_MAX_MILES = targetMiles * 1.15;
   const CONE_HALF_DEG   = 30;
@@ -938,9 +981,10 @@ function placeRuinsQuest(fromTileX: number, fromTileY: number, forwardBearingDeg
 }
 
 // Initialize daily recap tracking after stats are loaded.
-milesAtLastMidnight = stats.milesTraveled;
-foodAtLastMidnight  = stats.foodConsumed;
-waterAtLastMidnight = stats.waterConsumed;
+milesAtLastMidnight       = stats.milesTraveled;
+foodAtLastMidnight        = stats.foodConsumed;
+waterAtLastMidnight       = stats.waterConsumed;
+foodSpoiledAtLastMidnight = stats.foodSpoiled;
 lastKnownDay = Math.floor(stats.daysTraveled);
 
 // --- Ambient temperature ---
@@ -1310,7 +1354,6 @@ function enterSurvey() {
   };
   chunkManager.beginSurvey(tx, ty, SURVEY_CHUNK_RADIUS);
   surveyTotalQueue = chunkManager.queueLength;
-  surveyCrosshair.style.display = "block";
   if (surveyTotalQueue > 0) surveyLoadBar.style.display = "block";
 }
 
@@ -1318,25 +1361,9 @@ function exitSurvey() {
   surveyOffsetX = 0;
   surveyOffsetY = 0;
   chunkManager.endSurvey();
-  surveyCrosshair.style.display = "none";
   surveyLoadBar.style.display = "none";
 }
 
-// Survey crosshair: shown at center of screen while surveying.
-const surveyCrosshair = document.createElement("div");
-surveyCrosshair.textContent = "⊕";
-surveyCrosshair.style.cssText = `
-  position: fixed;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 22px;
-  color: rgba(255,255,255,0.55);
-  pointer-events: none;
-  z-index: 700;
-  display: none;
-  text-shadow: 0 0 6px rgba(0,0,0,0.8);
-`;
-document.body.appendChild(surveyCrosshair);
 
 // Thin progress bar at top of canvas showing async chunk load progress.
 const surveyLoadBar = document.createElement("div");
@@ -1405,7 +1432,7 @@ function showForageEmoji(emoji: string) {
 }
 
 // --- Quest complete ---
-function showQuestComplete(quest: { title: string }, onDismiss: () => void) {
+function showQuestComplete(quest: { title: string }, cityName: string, onDismiss: () => void) {
   const homeDx = player.tileX - startTileX, homeDy = player.tileY - startTileY;
   const milesFromHome = Math.sqrt(homeDx * homeDx + homeDy * homeDy) * MILES_PER_TILE;
   const homeAngle = ((Math.atan2(homeDx, -homeDy) * 180 / Math.PI) + 360) % 360;
@@ -1426,7 +1453,8 @@ function showQuestComplete(quest: { title: string }, onDismiss: () => void) {
     background: rgba(18,18,18,0.97);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 10px; padding: 40px 56px;
-    text-align: center; max-width: 400px;
+    max-width: 500px; width: 100%;
+    display: flex; flex-direction: column; align-items: center;
   `;
 
   const title = document.createElement('div');
@@ -1435,16 +1463,44 @@ function showQuestComplete(quest: { title: string }, onDismiss: () => void) {
 
   const subtitle = document.createElement('div');
   subtitle.textContent = quest.title;
-  subtitle.style.cssText = 'font-size: 13px; color: #aaa; margin-bottom: 28px;';
+  subtitle.style.cssText = 'font-size: 13px; color: #aaa; margin-bottom: 14px;';
+
+  const cityLine = document.createElement('div');
+  cityLine.textContent = `You explored ${cityName}`;
+  cityLine.style.cssText = 'font-size: 15px; color: #e8d8a0; margin-bottom: 28px; letter-spacing: 0.03em;';
 
   const stats_el = document.createElement('div');
-  stats_el.style.cssText = 'font-size: 13px; color: #999; line-height: 2; margin-bottom: 32px;';
-  stats_el.innerHTML = [
-    `Miles traveled &nbsp;&nbsp;&nbsp;&nbsp;<b style="color:#ddd">${stats.milesTraveled.toFixed(1)} mi</b>`,
-    `Distance from start &nbsp;<b style="color:#ddd">${homeBearing}</b>`,
-    `Food consumed &nbsp;&nbsp;&nbsp;&nbsp;<b style="color:#ddd">${stats.foodConsumed.toFixed(1)} lbs</b>`,
-    `Water consumed &nbsp;&nbsp;&nbsp;&nbsp;<b style="color:#ddd">${stats.waterConsumed.toFixed(1)} gal</b>`,
-  ].join('<br>');
+  stats_el.style.cssText = 'font-size: 13px; margin-bottom: 32px; width: 100%;';
+
+  function statRow(label: string, value: string, indent = false): HTMLDivElement {
+    const row = document.createElement('div');
+    row.style.cssText = `display:flex; justify-content:space-between; align-items:baseline; gap:24px; padding:4px 0 4px ${indent ? '20px' : '0'};`;
+    const lbl = document.createElement('span');
+    lbl.textContent = label;
+    lbl.style.color = indent ? '#666' : '#888';
+    const val = document.createElement('span');
+    val.textContent = value;
+    val.style.cssText = 'color:#ddd; white-space:nowrap;';
+    row.append(lbl, val);
+    return row;
+  }
+
+  function divider(): HTMLHRElement {
+    const hr = document.createElement('hr');
+    hr.style.cssText = 'border:none; border-top:1px solid rgba(255,255,255,0.07); margin:8px 0;';
+    return hr;
+  }
+
+  stats_el.append(
+    statRow('Miles traveled', `${stats.milesTraveled.toFixed(1)} mi`),
+    ...(stats.milesOverland  > 0.05 ? [statRow('· Overland',  `${stats.milesOverland.toFixed(1)} mi`,  true)] : []),
+    ...(stats.milesPortaging > 0.05 ? [statRow('· Portaging', `${stats.milesPortaging.toFixed(1)} mi`, true)] : []),
+    ...(stats.milesByCanoe   > 0.05 ? [statRow('· By canoe',  `${stats.milesByCanoe.toFixed(1)} mi`,   true)] : []),
+    statRow('Distance from start', homeBearing),
+    divider(),
+    statRow('Food consumed',  `${stats.foodConsumed.toFixed(1)} lbs`),
+    statRow('Water consumed', `${stats.waterConsumed.toFixed(1)} gal`),
+  );
 
   const btn = document.createElement('button');
   btn.textContent = 'Continue';
@@ -1464,7 +1520,7 @@ function showQuestComplete(quest: { title: string }, onDismiss: () => void) {
     btn.focus();
   });
 
-  box.append(title, subtitle, stats_el, btn);
+  box.append(title, subtitle, cityLine, stats_el, btn);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 }
@@ -1625,7 +1681,7 @@ function tick() {
     }
   }
 
-  const playerInput = (isSurveying || huntingMode)
+  const playerInput = isSurveying
     ? { up: false, down: false, left: false, right: false }
     : input;
 
@@ -1851,21 +1907,24 @@ function tick() {
   // walked during the day that just ended and show it until 9 AM.
   const currentDay = Math.floor(stats.daysTraveled);
   if (currentDay > lastKnownDay) {
-    const dayMiles = stats.milesTraveled - milesAtLastMidnight;
-    const dayFood  = stats.foodConsumed  - foodAtLastMidnight;
-    const dayWater = stats.waterConsumed - waterAtLastMidnight;
+    const dayMiles   = stats.milesTraveled - milesAtLastMidnight;
+    const dayFood    = stats.foodConsumed  - foodAtLastMidnight;
+    const dayWater   = stats.waterConsumed - waterAtLastMidnight;
+    const daySpoiled = stats.foodSpoiled   - foodSpoiledAtLastMidnight;
     if (dayMiles >= 0.05) {
       dailyRecapText.textContent = `Day ${lastKnownDay + 1}: ${dayMiles.toFixed(1)} miles traveled`;
       dailyRecapEl.style.transition = "none";
       dailyRecapEl.style.opacity = "1";
       hasRecapData = true;
+      const spoiledStr = daySpoiled >= 0.1 ? ` · ${daySpoiled.toFixed(1)} lbs spoiled` : '';
       activityLog.addEntry(
-        `Day ${lastKnownDay + 1}: ${dayMiles.toFixed(1)} mi · ate ${dayFood.toFixed(1)} lbs · drank ${dayWater.toFixed(1)} gal`,
+        `Day ${lastKnownDay + 1}: ${dayMiles.toFixed(1)} mi · ate ${dayFood.toFixed(1)} lbs · drank ${dayWater.toFixed(1)} gal${spoiledStr}`,
       );
     }
-    milesAtLastMidnight = stats.milesTraveled;
-    foodAtLastMidnight  = stats.foodConsumed;
-    waterAtLastMidnight = stats.waterConsumed;
+    milesAtLastMidnight       = stats.milesTraveled;
+    foodAtLastMidnight        = stats.foodConsumed;
+    waterAtLastMidnight       = stats.waterConsumed;
+    foodSpoiledAtLastMidnight = stats.foodSpoiled;
     lastKnownDay = currentDay;
   }
   updateDailyRecap(stats.daysTraveled);
@@ -1942,6 +2001,14 @@ function tick() {
       mendingHeartEl.style.left = `${pos.x + (both ? 9 : 0)}px`;
       mendingHeartEl.style.top = `${indicatorY}px`;
     }
+  }
+
+  // Hunting reticle wobble: amplitude scales with distance, settles after ~1.5s of stillness.
+  if (huntingMode) {
+    const fromPos = getPlayerScreenPos();
+    const mPos = huntingOverlay.getMouseScreenPos();
+    const distPx = Math.sqrt((mPos.x - fromPos.x) ** 2 + (mPos.y - fromPos.y) ** 2);
+    huntingOverlay.update(delta, distPx * 0.12);
   }
 
   renderer.render(scene, camera);
