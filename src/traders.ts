@@ -46,7 +46,7 @@ export class TraderManager {
     const mainEl = document.createElement('div');
     mainEl.textContent = '🚶‍➡️';
     mainEl.style.cssText = `
-      position: fixed; font-size: 22px; line-height: 1;
+      position: fixed; font-size: 36px; line-height: 1;
       pointer-events: none; z-index: 618;
       transform: translate(-50%, -50%); display: none;
     `;
@@ -55,7 +55,7 @@ export class TraderManager {
     const packEl = document.createElement('div');
     packEl.textContent = '🫏';
     packEl.style.cssText = `
-      position: fixed; font-size: 16px; line-height: 1;
+      position: fixed; font-size: 26px; line-height: 1;
       pointer-events: none; z-index: 617;
       transform: translate(-50%, -50%); display: none;
     `;
@@ -81,8 +81,8 @@ export class TraderManager {
 
     const cr        = getContentRect(this.canvasEl);
     const scale     = cr.w / CANVAS_WIDTH;
-    const mainFs    = Math.round(22 * scale);
-    const packFs    = Math.round(16 * scale);
+    const mainFs    = Math.round(36 * scale);
+    const packFs    = Math.round(26 * scale);
 
     for (let i = this.traders.length - 1; i >= 0; i--) {
       const t = this.traders[i];
@@ -125,9 +125,10 @@ export class TraderManager {
       const on  = sx >= cr.x - pad && sx <= cr.x + cr.w + pad
                && sy >= cr.y - pad && sy <= cr.y + cr.h + pad;
 
-      // Flip horizontally when heading left
-      const flipMain = Math.cos(t.angle) < 0 ? 'scaleX(-1)' : '';
-      const flipPack = Math.cos(t.angle) < 0 ? 'scaleX(-1)' : '';
+      // Both trader and donkey face the direction of travel.
+      // 🚶‍➡️ and 🫏 both default to right-facing, so flip when heading left.
+      const goingLeft = Math.cos(t.angle) < 0;
+      const flip = `scaleX(${goingLeft ? -1 : 1})`;
 
       t.mainEl.style.display = on ? 'block' : 'none';
       t.packEl.style.display = on ? 'block' : 'none';
@@ -135,12 +136,12 @@ export class TraderManager {
         t.mainEl.style.left      = `${sx}px`;
         t.mainEl.style.top       = `${sy}px`;
         t.mainEl.style.fontSize  = `${mainFs}px`;
-        t.mainEl.style.transform = `translate(-50%, -50%) ${flipMain}`;
+        t.mainEl.style.transform = `translate(-50%, -50%) ${flip}`;
 
         t.packEl.style.left      = `${psx}px`;
         t.packEl.style.top       = `${psy}px`;
         t.packEl.style.fontSize  = `${packFs}px`;
-        t.packEl.style.transform = `translate(-50%, -50%) ${flipPack}`;
+        t.packEl.style.transform = `translate(-50%, -50%) ${flip}`;
       }
     }
   }
