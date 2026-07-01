@@ -125,10 +125,11 @@ export class TraderManager {
       const on  = sx >= cr.x - pad && sx <= cr.x + cr.w + pad
                && sy >= cr.y - pad && sy <= cr.y + cr.h + pad;
 
-      // Both trader and donkey face the direction of travel.
-      // 🚶‍➡️ and 🫏 both default to right-facing, so flip when heading left.
+      // 🚶‍➡️ defaults to right-facing → flip when going left.
+      // 🫏 defaults to left-facing → flip when going right.
       const goingLeft = Math.cos(t.angle) < 0;
-      const flip = `scaleX(${goingLeft ? -1 : 1})`;
+      const traderFlip = `scaleX(${goingLeft ? -1 : 1})`;
+      const donkeyFlip = `scaleX(${goingLeft ? 1 : -1})`;
 
       t.mainEl.style.display = on ? 'block' : 'none';
       t.packEl.style.display = on ? 'block' : 'none';
@@ -136,12 +137,12 @@ export class TraderManager {
         t.mainEl.style.left      = `${sx}px`;
         t.mainEl.style.top       = `${sy}px`;
         t.mainEl.style.fontSize  = `${mainFs}px`;
-        t.mainEl.style.transform = `translate(-50%, -50%) ${flip}`;
+        t.mainEl.style.transform = `translate(-50%, -50%) ${traderFlip}`;
 
         t.packEl.style.left      = `${psx}px`;
         t.packEl.style.top       = `${psy}px`;
         t.packEl.style.fontSize  = `${packFs}px`;
-        t.packEl.style.transform = `translate(-50%, -50%) ${flip}`;
+        t.packEl.style.transform = `translate(-50%, -50%) ${donkeyFlip}`;
       }
     }
   }

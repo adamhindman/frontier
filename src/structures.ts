@@ -203,6 +203,17 @@ export class StructureManager {
     return -1;
   }
 
+  // Like findUnfinished but also matches structures within `radius` Chebyshev tiles.
+  findUnfinishedNear(tileX: number, tileY: number, type: StructureType, radius: number): number {
+    for (let i = 0; i < this.slots.length; i++) {
+      const s = this.slots[i];
+      if (s && !s.complete && s.type === type
+        && Math.abs(s.tileX - tileX) <= radius
+        && Math.abs(s.tileY - tileY) <= radius) return i;
+    }
+    return -1;
+  }
+
   getTile(index: number): { tileX: number; tileY: number } | null {
     const s = this.slots[index];
     return s ? { tileX: s.tileX, tileY: s.tileY } : null;

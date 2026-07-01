@@ -202,31 +202,6 @@ const radialMenu = createRadialMenu(
     const biomeTimber = BIOMES[tileBiome].baseResources.timber;
     const inShelter = structures.playerInCompletedShelter(ptx, pty);
 
-    // Check for unfinished structures on the player's tile (for top-level resume buttons).
-    const resumeCanoeIdx    = structures.findUnfinished(ptx, pty, 'canoe');
-    const resumeShelterIdx  = structures.findUnfinished(ptx, pty, 'shelter');
-    const resumeCanoeItem = resumeCanoeIdx >= 0 ? {
-      label: 'Resume Canoe',
-      disabled: !daylight,
-      action: () => {
-        const cfg = STRUCTURE_CONFIGS.canoe;
-        const timberPerHour = cfg.timberCost / cfg.totalHours;
-        const savedProgress = structures.getProgressDays(resumeCanoeIdx);
-        if (savedProgress >= cfg.totalHours / 24) { structures.complete(resumeCanoeIdx, stats); }
-        else { stats.activeAction = { id: 'build_canoe', label: 'Building canoe', durationDays: cfg.totalHours / 24, progressDays: savedProgress, structureIndex: resumeCanoeIdx, timberPerHour }; }
-      },
-    } : null;
-    const resumeShelterItem = resumeShelterIdx >= 0 ? {
-      label: 'Resume Shelter',
-      disabled: !daylight,
-      action: () => {
-        const cfg = STRUCTURE_CONFIGS.shelter;
-        const timberPerHour = cfg.timberCost / cfg.totalHours;
-        const savedProgress = structures.getProgressDays(resumeShelterIdx);
-        if (savedProgress >= cfg.totalHours / 24) { structures.complete(resumeShelterIdx, stats); }
-        else { stats.activeAction = { id: 'build_shelter', label: 'Building shelter', durationDays: cfg.totalHours / 24, progressDays: savedProgress, structureIndex: resumeShelterIdx, timberPerHour }; }
-      },
-    } : null;
 
     return [
       {
@@ -297,8 +272,6 @@ const radialMenu = createRadialMenu(
         disabled: onWater || aboveTreeline || inShelter,
         action: () => placeCampfire(ptx, pty, 2),
       },
-      ...(resumeCanoeItem   ? [resumeCanoeItem]   : []),
-      ...(resumeShelterItem ? [resumeShelterItem] : []),
       ...(() => {
         const site = settlements.getProximitySite(ptx, pty);
         if (!site) return [];
@@ -332,78 +305,48 @@ const radialMenu = createRadialMenu(
           const canBuildFromBiome = !aboveTreeline && biomeTimber > 0;
           return [
             {
-              label: existingCanoe >= 0 ? "Resume Canoe" : "Canoe",
+              label: "Canoe",
               disabled:
                 !daylight ||
                 inShelter ||
-                (existingCanoe < 0 && !canBuildFromBiome),
+                existingCanoe >= 0 ||
+                !canBuildFromBiome,
               action: () => {
                 const cfg = STRUCTURE_CONFIGS.canoe;
                 const timberPerHour = cfg.timberCost / cfg.totalHours;
-                if (existingCanoe >= 0) {
-                  const savedProgress =
-                    structures.getProgressDays(existingCanoe);
-                  if (savedProgress >= cfg.totalHours / 24) {
-                    structures.complete(existingCanoe, stats);
-                  } else {
-                    stats.activeAction = {
-                      id: "build_canoe",
-                      label: "Building canoe",
-                      durationDays: cfg.totalHours / 24,
-                      progressDays: savedProgress,
-                      structureIndex: existingCanoe,
-                      timberPerHour,
-                    };
-                  }
-                } else {
-                  const idx = structures.add(tileX, tileY, "canoe");
-                  const matTile = findAdjacentLandTile(tileX, tileY) ?? {
-                    tileX: tileX + 1,
-                    tileY: tileY,
-                  };
-                  timberPiles.addAmount(
-                    matTile.tileX,
-                    matTile.tileY,
-                    cfg.timberCost,
-                    isWaterBiome,
-                    isOccupied,
-                  );
-                  stats.activeAction = {
-                    id: "build_canoe",
-                    label: "Building canoe",
-                    durationDays: cfg.totalHours / 24,
-                    progressDays: 0,
-                    structureIndex: idx,
-                    timberPerHour,
-                  };
-                }
+                const idx = structures.add(tileX, tileY, "canoe");
+                const matTile = findAdjacentLandTile(tileX, tileY) ?? {
+                  tileX: tileX + 1,
+                  tileY: tileY,
+                };
+                timberPiles.addAmount(
+                  matTile.tileX,
+                  matTile.tileY,
+                  cfg.timberCost,
+                  isWaterBiome,
+                  isOccupied,
+                );
+                stats.activeAction = {
+                  id: "build_canoe",
+                  label: "Building canoe",
+                  durationDays: cfg.totalHours / 24,
+                  progressDays: 0,
+                  structureIndex: idx,
+                  timberPerHour,
+                };
               },
             },
             {
-              label: existingShelter >= 0 ? "Resume Shelter" : "Shelter",
+              label: "Shelter",
               disabled:
                 !daylight ||
                 inShelter ||
-                (existingShelter < 0 && !canBuildFromBiome),
+                existingShelter >= 0 ||
+                !canBuildFromBiome,
               action: () => {
                 const cfg = STRUCTURE_CONFIGS.shelter;
                 const timberPerHour = cfg.timberCost / cfg.totalHours;
-                if (existingShelter >= 0) {
-                  const savedProgress =
-                    structures.getProgressDays(existingShelter);
-                  if (savedProgress >= cfg.totalHours / 24) {
-                    structures.complete(existingShelter, stats);
-                  } else {
-                    stats.activeAction = {
-                      id: "build_shelter",
-                      label: "Building shelter",
-                      durationDays: cfg.totalHours / 24,
-                      progressDays: savedProgress,
-                      structureIndex: existingShelter,
-                      timberPerHour,
-                    };
-                  }
-                } else {
+                {
                   const idx = structures.add(tileX, tileY, "shelter");
                   const matTile = findAdjacentLandTile(tileX, tileY) ?? {
                     tileX: tileX + 1,
@@ -484,12 +427,20 @@ window.addEventListener("keydown", (e) => {
     }
   }
   if (e.key === "Shift" && !e.repeat) {
-    e.preventDefault();
     huntingMode = true;
     huntingOverlay.setActive(true);
     animals.setHuntingMode(true);
     huntingVignette.style.opacity = '1';
     radialMenu.closeAll();
+  }
+  // Shift + any other key (e.g. Shift+4 screenshot shortcut) → exit hunting mode.
+  if (e.shiftKey && e.key !== "Shift") {
+    if (huntingMode) {
+      huntingMode = false;
+      huntingOverlay.setActive(false);
+      animals.setHuntingMode(false);
+      huntingVignette.style.opacity = '0';
+    }
   }
 });
 
@@ -504,6 +455,7 @@ window.addEventListener("keyup", (e) => {
 
 // Hunting click: fire rifle toward the clicked tile direction.
 renderer.domElement.addEventListener("click", (e) => {
+  if (manualPaused || blurPaused) return;
   if (!huntingMode) return;
   if (stats.rifleAmmo <= 0) {
     showHudMessage("Out of ammunition");
@@ -512,11 +464,15 @@ renderer.domElement.addEventListener("click", (e) => {
   const tile = huntingOverlay.getClickTile(e, camera);
   if (!tile) return;
 
-  // Direction from player center to clicked tile center
+  // Direction from player center to clicked tile center, with random spread (±6°).
   const cx = tile.tileX + 0.5, cy = tile.tileY + 0.5;
   const dx = cx - player.tileX, dy = cy - player.tileY;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
-  const ndx = dx / len, ndy = dy / len;
+  const baseNdx = dx / len, baseNdy = dy / len;
+  const jitter = (Math.random() * 2 - 1) * (6 * Math.PI / 180);
+  const cosJ = Math.cos(jitter), sinJ = Math.sin(jitter);
+  const ndx = baseNdx * cosJ - baseNdy * sinJ;
+  const ndy = baseNdx * sinJ + baseNdy * cosJ;
 
   const result = animals.fireRay(player.tileX, player.tileY, ndx, ndy, RIFLE_RANGE);
   animals.scareAll(player.tileX, player.tileY);
@@ -545,8 +501,8 @@ const tileInspector = createTileInspector(
 // --- Pause state ---
 // Two independent pause sources: manual (P key / button) and blur (window lost focus).
 // Blur-pause requires an explicit click or keypress to dismiss; it does not auto-clear on focus.
-// manualPaused is persisted in sessionStorage so hot reloads don't silently unpause the game.
-let manualPaused = sessionStorage.getItem("manualPaused") === "true";
+// manualPaused is persisted in localStorage so it survives page reloads and crash recovery.
+let manualPaused = localStorage.getItem("manualPaused") === "true";
 let blurPaused = false;
 
 const pauseOverlay = document.createElement("div");
@@ -570,7 +526,7 @@ function updatePauseState() {
 
 function toggleManualPause() {
   manualPaused = !manualPaused;
-  sessionStorage.setItem("manualPaused", String(manualPaused));
+  localStorage.setItem("manualPaused", String(manualPaused));
   updatePauseState();
 }
 
@@ -578,6 +534,10 @@ function toggleManualPause() {
 window.addEventListener("blur", () => {
   blurPaused = true;
   updatePauseState();
+});
+// Also pause when the tab/page is hidden (covers sleep/wake and tab switches that don't fire blur).
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { blurPaused = true; updatePauseState(); }
 });
 
 // --- Hunting vignette ---
@@ -1257,8 +1217,8 @@ const playerEl = document.createElement("img");
 playerEl.src = playerFrontIdleUrl;
 playerEl.style.cssText = `
   position: fixed;
-  width: 32px;
-  height: 32px;
+  width: 24px;
+  height: 24px;
   image-rendering: pixelated;
   transform: translate(-50%, -50%);
   pointer-events: none;
@@ -1272,7 +1232,7 @@ const canoeEl = document.createElement("img");
 canoeEl.src = canoeRightUrl;
 canoeEl.style.cssText = `
   position: fixed;
-  width: 64px;
+  width: 50px;
   height: auto;
   image-rendering: pixelated;
   transform: translate(-50%, -50%);
@@ -1628,7 +1588,7 @@ function showGameOver() {
   });
   btn.addEventListener("click", () => {
     deleteSave(currentSeed);
-    sessionStorage.removeItem("manualPaused");
+    localStorage.removeItem("manualPaused");
     window.location.reload();
   });
 
@@ -1801,6 +1761,29 @@ function tick() {
 
   // Stepping onto a campfire tile douses it
   structures.extinguishAt(tx, ty);
+
+  // Auto-resume: stepping onto an unfinished structure tile automatically restarts the build.
+  if (!stats.activeAction && isDaylight(stats.daysTraveled)) {
+    for (const type of ['canoe', 'shelter'] as const) {
+      const idx = structures.findUnfinished(tx, ty, type);
+      if (idx < 0) continue;
+      const cfg = STRUCTURE_CONFIGS[type];
+      const savedProgress = structures.getProgressDays(idx);
+      if (savedProgress >= cfg.totalHours / 24) {
+        structures.complete(idx, stats);
+      } else {
+        stats.activeAction = {
+          id: `build_${type}` as 'build_canoe' | 'build_shelter',
+          label: `Building ${cfg.label.toLowerCase()}`,
+          durationDays: cfg.totalHours / 24,
+          progressDays: savedProgress,
+          structureIndex: idx,
+          timberPerHour: cfg.timberCost / cfg.totalHours,
+        };
+      }
+      break; // only resume one at a time
+    }
+  }
 
   // Stop build if player left the required build tile.
   // buildTileX/Y overrides the structure tile (used when the structure is placed
@@ -2024,12 +2007,19 @@ function tick() {
   // preventing the per-frame jitter that comes from using a stale camera position.
   {
     const pos = getPlayerScreenPos();
+    const cr = renderer.domElement.getBoundingClientRect();
+    const spriteScale = cr.width / CANVAS_WIDTH;
+    const playerPx = Math.round(24 * spriteScale);
+    const canoePx  = Math.round(50 * spriteScale);
     if (usingCanoe) {
-      canoeEl.style.left = `${pos.x}px`;
-      canoeEl.style.top = `${pos.y}px`;
+      canoeEl.style.left  = `${pos.x}px`;
+      canoeEl.style.top   = `${pos.y}px`;
+      canoeEl.style.width = `${canoePx}px`;
     } else {
-      playerEl.style.left = `${pos.x}px`;
-      playerEl.style.top = `${pos.y}px`;
+      playerEl.style.left   = `${pos.x}px`;
+      playerEl.style.top    = `${pos.y}px`;
+      playerEl.style.width  = `${playerPx}px`;
+      playerEl.style.height = `${playerPx}px`;
     }
     // Status indicators above the player sprite. Offset sideways when both show.
     const cold = stats.warmth < 50;
@@ -2051,7 +2041,7 @@ function tick() {
     const fromPos = getPlayerScreenPos();
     const mPos = huntingOverlay.getMouseScreenPos();
     const distPx = Math.sqrt((mPos.x - fromPos.x) ** 2 + (mPos.y - fromPos.y) ** 2);
-    huntingOverlay.update(delta, distPx * 0.12);
+    huntingOverlay.update(delta, distPx * 0.07);
   }
 
   renderer.render(scene, camera);

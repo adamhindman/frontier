@@ -49,7 +49,7 @@ Each biome has a `BiomeProperties` object in `BIOMES` — single source of truth
 
 Tile-based movement with lerp. At `progress >= 1.0` the player snaps to the completed tile and queues the next step. `update(input, delta, speedMultiplier, canEnter?)` accepts an optional `canEnter(tx, ty) => boolean` callback checked before committing to a new tile. Diagonal moves that are blocked attempt wall-sliding (each cardinal axis tried individually) before stopping.
 
-The player is rendered as a pixel-art sprite (`<img>` DOM overlay) that switches between four directional sprites: front-idle, back-idle, right-walk, left-walk. On water with a canoe, a separate canoe sprite overlay replaces the player sprite.
+The player is rendered as a pixel-art sprite (`<img>` DOM overlay) that switches between four directional sprites: front-idle, back-idle, right-walk, left-walk. On water with a canoe, a separate canoe sprite overlay replaces the player sprite. Both sprites are sized dynamically each frame: player = `24 * (cr.w / CANVAS_WIDTH)` px, canoe = `50 * (cr.w / CANVAS_WIDTH)` px.
 
 ### Water movement constraint (`main.ts` — `canEnterTile`)
 
@@ -146,13 +146,16 @@ Morale labels: Despair (0–20), Ruined (21–40), Weary (41–60), Resolute (61
 
 - `add(tileX, tileY, type)` → creates DOM element, returns slot index
 - `setProgress(index, progressDays)` → updates tooltip text
-- `findUnfinished(tileX, tileY, type)` → returns slot index or -1; used by the Build menu to show "Resume"
+- `findUnfinished(tileX, tileY, type)` → exact tile match; returns slot index or -1
+- `findUnfinishedNear(tileX, tileY, type, radius)` → Chebyshev radius search; returns slot index or -1
 - `complete(index, stats)` → canoe: increments `stats.canoes`, removes element; shelter/campfire: marks complete
 - `tickCampfires(gameDays)` → advances burn timers; returns list of campfires that need fuel consumed from adjacent piles
 - `isWarmed(tileX, tileY)` → true if player is adjacent to a lit campfire or inside a completed shelter
 - `playerInCompletedShelter(tileX, tileY)` → true if player tile is a completed shelter
 
 **Build flow:** No timber deducted upfront. Timber is drawn from adjacent `TimberPile` objects one unit per in-game hour crossed. Escape or moving off the tile cancels; structure retains progress for resumption. Campfires are auto-placed by `placeCampfire()` when the player rests without a shelter.
+
+**Auto-resume:** Stepping onto an unfinished `canoe` or `shelter` tile during daylight with no active action automatically resumes the build — no menu interaction required. Moving off the tile cancels it again (same as normal). The Build menu items for Canoe and Shelter are disabled when an unfinished structure already exists on the player's tile (auto-resume handles resumption).
 
 ### Timber piles (`timberPiles.ts`, `TimberPileManager`)
 
@@ -188,14 +191,14 @@ Scrollable panel (toggled with `L`) showing per-day recap entries ("Day 3: 4.2 m
 
 ### Hunting (`hunting.ts`, `HuntingOverlay`)
 
-`HuntingOverlay` manages the rifle hunting mode. Toggle with **Shift**; click to fire.
+`HuntingOverlay` manages the rifle hunting mode. Toggle with **Shift** (held alone); Shift+any other key immediately exits hunting mode so keyboard shortcuts (e.g. Shift+4 screenshots) work normally. Click to fire.
 
-- `update(dtSec, amplitudePx)` — called every frame; advances the wobble phase and repositions the crosshair using two incommensurate sinusoid pairs per axis for erratic motion: `wobbleX = A*(sin(t*8.3+0.5) + 0.4*sin(t*13.7+1.9))`, `wobbleY = A*(cos(t*6.1) + 0.4*cos(t*11.3+0.8))`. Amplitude scales with pixel distance from player to target.
+- `update(dtSec, amplitudePx)` — called every frame; advances the wobble phase and repositions the crosshair using two incommensurate sinusoid pairs per axis for erratic motion: `wobbleX = A*(sin(t*8.3+0.5) + 0.4*sin(t*13.7+1.9))`, `wobbleY = A*(cos(t*6.1) + 0.4*cos(t*11.3+0.8))`. Amplitude is `distPx * 0.07` where `distPx` is the screen-pixel distance from player to cursor.
 - `getClickTile()` — applies current wobble offset to the click coordinates, so visual crosshair and effective aim always match.
 - `getMouseScreenPos()` — raw mouse position without wobble (used for amplitude computation).
 - `setActive(false)` — resets wobble state.
 
-`RIFLE_RANGE = 10` tiles. Firing costs 1 `rifleAmmo`. Kills add `meatLbs` to `stats.food` and `furPelts` to `stats.pelts`. When a shot fires, `animals.scareAll(px, py)` is called — all prey animals flee 40 tiles away at their flee speed.
+`RIFLE_RANGE = 10` tiles. Firing costs 1 `rifleAmmo`. Each shot applies a ±6° random angular jitter to the aim direction (on top of the visual crosshair wobble). Ray hit detection uses `HIT_RADIUS = 0.2` tiles — center-mass precision required. Kills add `meatLbs` to `stats.food` and `furPelts` to `stats.pelts`. When a shot fires, `animals.scareAll(px, py)` is called — all prey animals flee 40 tiles away at their flee speed.
 
 ### Animals (`animals.ts`, `AnimalManager`, `FishJumpEffect`)
 
@@ -221,14 +224,13 @@ Stop button appears for infinite-duration actions and build actions. Extend the 
 
 Stack-based nested radial menu. Open with **Space**; Escape cancels. Number keys 1–9 activate buttons. `getItems` callback is evaluated at open time — check current state inside it. Third parameter `onClose?: () => void` fires only when the menu was actually open (not on every `closeAll()` call — important, since `closeAll()` is called every frame when the player moves).
 
-**Hotkey numbering:** The "← Back" item in submenus is never assigned a number badge. A separate `badgeCounter` (distinct from row index `i`) is incremented only for non-back, non-disabled items. The number key handler offsets past the Back row so key `1` always hits the first real item.
+**Hotkey numbering:** The "← Back" item in submenus is never assigned a number badge. A separate `badgeCounter` is incremented only for non-back, non-disabled items. The number key handler walks `renderedItems` with the same skip logic (skipping Back and disabled items), so badge N and key `N` always map to the same row regardless of how many disabled items appear above it.
 
 Context-sensitive disabling rules:
 - **Rest**: disabled on water, above treeline
 - **Forage, Harvest**: disabled at night; forage disabled in shelter
 - **Survey**: disabled at night, in shelter
-- **Build**: disabled at night; sub-items show "Resume X" if an unfinished structure exists at the player's tile
-- **Resume Canoe / Resume Shelter**: appear as top-level items when standing on an unfinished structure of that type
+- **Build**: disabled at night; Canoe/Shelter sub-items disabled if an unfinished structure already exists on the player's tile (auto-resume handles resumption — see Structures)
 
 ### Keyboard shortcuts
 
@@ -250,6 +252,8 @@ Mouse hover shows tooltip and `LineLoop` highlight. Always calls `getBiome` with
 ### Save system (`save.ts`)
 
 `SAVE_VERSION = 3`. Saves to `localStorage` keyed by seed. Persists: stats (minus `activeAction`), player position, start tile, weather seed, structures, dropped canoes, timber piles, map pins, quests. Version mismatch silently discards the save. Auto-saves every 60 seconds; also saves on page unload.
+
+**Pause persistence:** `manualPaused` is stored in `localStorage` (not sessionStorage) so it survives page reloads and crash recovery. `blurPaused` is set by both `window.blur` and `document.visibilitychange` (covers sleep/wake and tab switches). Only pressing P clears either pause flag. Canvas clicks are blocked while paused.
 
 ### Distance from start (`main.ts`)
 
@@ -279,6 +283,7 @@ Animal constants in `animals.ts`: `MAX_ANIMALS`, `SPAWN_RADIUS_MIN/MAX`, `DESPAW
 - `coordinates.test.ts` — `canvasCoordsToTile()` with various camera positions
 - `playerStats.test.ts` — `getMoraleLabel()` boundaries, `getWeightMultiplier()`, `createStats()` field initialization (including `rifleAmmo`, `pelts`, mileage breakdown, `foodSpoiled`), `updateStats()` build action (drain + completion + night stop), forage action (drain, hourly gain, fishing with `fishBiome`), food spoilage (rate, floor, accumulation, zero-food case), mileage breakdown (overland / portaging / canoe), health/morale regeneration
 - `biomes.test.ts` — `getBiome()` elevation thresholds, river/lake overrides, water detection
+- `structures.test.ts` — `findUnfinished()` (exact match, wrong tile, complete, wrong type, multiple slots) and `findUnfinishedNear()` (exact, adjacent, diagonal, radius boundary, complete/type skipping, first-match ordering). Constructor tested with null canvas/camera since `add()` is the only DOM-calling method.
 
 ## Planned features
 

@@ -316,10 +316,14 @@ export function createRadialMenu(
 
     const num = parseInt(e.key, 10);
     if (!isNaN(num) && num >= 1) {
-      // If a back item is prepended, number keys map to the items after it.
-      const offset = renderedItems[0]?.label === '← Back' ? 1 : 0;
-      const row = getRows()[num - 1 + offset];
-      if (row) { e.preventDefault(); row.click(); }
+      // Walk renderedItems with the same skip logic as the badge counter:
+      // skip disabled items and the Back item. Key N fires the Nth visible badge.
+      const rows = getRows();
+      let count = 0;
+      for (let i = 0; i < renderedItems.length; i++) {
+        if (renderedItems[i].label === '← Back' || renderedItems[i].disabled) continue;
+        if (++count === num) { e.preventDefault(); rows[i]?.click(); break; }
+      }
     }
   });
 

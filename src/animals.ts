@@ -189,7 +189,7 @@ export class AnimalManager {
   // Fire a ray from (ox, oy) in direction (dx, dy) (normalized) for up to `range` tiles.
   // Returns the bullet endpoint in continuous tile space and whether an animal was hit.
   fireRay(ox: number, oy: number, dx: number, dy: number, range: number): { endX: number; endY: number } {
-    const HIT_RADIUS = 0.6;
+    const HIT_RADIUS = 0.2;
     let bestT = range;
     let bestAnimal: AnimalInstance | null = null;
 
