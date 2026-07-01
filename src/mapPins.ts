@@ -7,6 +7,7 @@ export interface MapPin {
   tileY: number;
   name: string;
   color: string;
+  fixed?: boolean;        // auto-placed, non-editable (settlements, villages)
   dayPlaced: number;      // game-days elapsed when the pin was created
   elevationFt: number;    // approximate feet above sea level
   biome: string;          // biome name at the tile
@@ -88,7 +89,13 @@ export class MapPinManager {
     editIcon.addEventListener('mouseenter', () => { editIcon.style.color = 'rgba(255,255,255,0.9)'; });
     editIcon.addEventListener('mouseleave', () => { editIcon.style.color = 'rgba(255,255,255,0.55)'; });
 
-    bubble.append(nameSpan, editIcon);
+    if (pin.fixed) {
+      // Non-editable: no edit icon, default cursor
+      bubble.style.cursor = 'default';
+      bubble.append(nameSpan);
+    } else {
+      bubble.append(nameSpan, editIcon);
+    }
 
     // ── Stem ───────────────────────────────────────────────────────────────
     const stem = document.createElement('div');
@@ -152,8 +159,10 @@ export class MapPinManager {
       });
     };
 
-    bubble.addEventListener('click',   (e) => { e.stopPropagation(); startEdit(); });
-    editIcon.addEventListener('click', (e) => { e.stopPropagation(); startEdit(); });
+    if (!pin.fixed) {
+      bubble.addEventListener('click',   (e) => { e.stopPropagation(); startEdit(); });
+      editIcon.addEventListener('click', (e) => { e.stopPropagation(); startEdit(); });
+    }
 
     this.editTriggers.push(startEdit);
     return index;

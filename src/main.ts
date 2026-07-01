@@ -12,6 +12,7 @@ import {
   MILES_PER_TILE,
   SECONDS_PER_DAY,
   FOOD_CAPACITY_LBS,
+  WATER_CAPACITY_GAL,
 } from "./playerStats";
 import playerFrontIdleUrl from "./assets/tiles/player-front-idle.png";
 import playerBackIdleUrl from "./assets/tiles/player-back-idle.png";
@@ -62,6 +63,8 @@ import { RuinSpriteManager } from "./ruinSprites";
 import { createActivityLog } from "./activityLog";
 import { AnimalManager, FishJumpEffect, RIFLE_RANGE } from "./animals";
 import { HuntingOverlay } from "./hunting";
+import { SettlementManager } from "./settlements";
+import { TraderManager } from "./traders";
 
 // --- Scene ---
 const scene = new THREE.Scene();
@@ -296,6 +299,21 @@ const radialMenu = createRadialMenu(
       },
       ...(resumeCanoeItem   ? [resumeCanoeItem]   : []),
       ...(resumeShelterItem ? [resumeShelterItem] : []),
+      ...(() => {
+        const site = settlements.getProximitySite(ptx, pty);
+        if (!site) return [];
+        const label = site.type === 'settlement'
+          ? `Enter ${site.name}`
+          : `Visit ${site.name}`;
+        return [{
+          label,
+          action: () => {
+            stats.food  = FOOD_CAPACITY_LBS;
+            stats.water = WATER_CAPACITY_GAL;
+            showToast(`Resupplied at ${site.name}`);
+          },
+        }];
+      })(),
       {
         label: "Build",
         children: (() => {
@@ -719,6 +737,8 @@ function tileToScreen(tileX: number, tileY: number): { x: number; y: number } {
 const timberPiles = new TimberPileManager(renderer.domElement, camera);
 const mapPins = new MapPinManager(renderer.domElement, camera);
 const ruinSprites = new RuinSpriteManager(renderer.domElement, camera);
+const settlements = new SettlementManager(renderer.domElement, camera, elevation, moisture, river, currentSeed, mapPins);
+const traders = new TraderManager(renderer.domElement, camera);
 const quests = new QuestManager({
   onComplete: (q) => {
     if (q.type !== 'find_and_name') return;
@@ -1406,6 +1426,26 @@ function getPlayerScreenPos() {
   };
 }
 
+function showToast(message: string) {
+  const el = document.createElement('div');
+  el.textContent = message;
+  el.style.cssText = `
+    position: fixed; left: 50%; top: 30%;
+    transform: translateX(-50%);
+    background: rgba(14,14,14,0.92);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 6px;
+    color: #d8c88a; font: 13px/1 monospace;
+    padding: 10px 20px;
+    pointer-events: none; z-index: 1800;
+    opacity: 1; transition: opacity 0.6s 1.4s ease-in;
+  `;
+  document.body.appendChild(el);
+  void el.offsetHeight;
+  el.style.opacity = '0';
+  setTimeout(() => el.remove(), 2200);
+}
+
 function showForageEmoji(emoji: string) {
   const { x, y } = getPlayerScreenPos();
   const jitter = (Math.random() - 0.5) * 64;
@@ -1959,6 +1999,9 @@ function tick() {
   droppedCanoes.update();
   timberPiles.update();
   ruinSprites.update();
+  settlements.discover(tx, ty, startTileX, startTileY);
+  settlements.update();
+  traders.update(effectiveDelta, player.visualX, player.visualY);
   animals.update(
     effectiveDelta,
     player.visualX,
