@@ -1,7 +1,13 @@
 import type { QuestManager } from "./quests";
 import { getTopBandHeight } from "./hud";
+import type { ManEaterQuest } from "./manEaterQuests";
+import { questDescription, MANEATER_QUEST_EXPIRE_DAYS } from "./manEaterQuests";
 
-export function createQuestPanel(questManager: QuestManager) {
+export function createQuestPanel(
+  questManager: QuestManager,
+  getManEaterQuests: () => ManEaterQuest[] = () => [],
+  getTrophyQuestIds: () => string[] = () => [],
+) {
   const panel = document.createElement("div");
   panel.style.cssText = `
     position: fixed;
@@ -22,7 +28,7 @@ export function createQuestPanel(questManager: QuestManager) {
   document.body.appendChild(panel);
 
   const titleEl = document.createElement("div");
-  titleEl.textContent = "Expedition Charter";
+  titleEl.textContent = "Quest Log";
   titleEl.style.cssText = `
     font: italic bold 15px/1 Georgia, serif;
     color: #7a4a1a;
@@ -47,13 +53,18 @@ export function createQuestPanel(questManager: QuestManager) {
   function renderList() {
     list.innerHTML = "";
     const quests = questManager.getAll();
-    if (quests.length === 0) {
+    const manEaterQuests = getManEaterQuests();
+    const trophyQuestIds = new Set(getTrophyQuestIds());
+
+    if (quests.length === 0 && manEaterQuests.length === 0) {
       const empty = document.createElement("div");
       empty.textContent = "No quests yet.";
       empty.style.cssText = "color: #9a7a50; font-style: italic;";
       list.appendChild(empty);
       return;
     }
+
+    // Ruin / find-and-name quests
     for (const quest of quests) {
       const item = document.createElement("div");
       item.style.cssText = "display: flex; flex-direction: column; gap: 3px;";
@@ -81,6 +92,54 @@ export function createQuestPanel(questManager: QuestManager) {
       desc.textContent = quest.description;
       desc.style.cssText =
         "color: #7a5a30; font-size: 12px; font-style: italic; padding-left: 22px;";
+
+      item.append(header, desc);
+      list.appendChild(item);
+    }
+
+    // Man-eater hunt quests
+    for (const q of manEaterQuests) {
+      const hasTrophy = trophyQuestIds.has(q.id);
+      const expireDay = Math.floor(q.acceptedDay!) + MANEATER_QUEST_EXPIRE_DAYS + 1;
+      const expired   = q.completed && !hasTrophy;
+
+      const item = document.createElement("div");
+      item.style.cssText = "display: flex; flex-direction: column; gap: 3px;";
+
+      const header = document.createElement("div");
+      header.style.cssText = "display: flex; align-items: baseline; gap: 8px;";
+
+      const statusDot = document.createElement("span");
+      if (q.completed && hasTrophy) {
+        statusDot.textContent = "★";
+        statusDot.style.cssText = "color: #5a7a3a; font-size: 13px; flex-shrink: 0;";
+      } else if (expired) {
+        statusDot.textContent = "✗";
+        statusDot.style.cssText = "color: #9a5050; font-size: 13px; flex-shrink: 0;";
+      } else {
+        statusDot.textContent = "◎";
+        statusDot.style.cssText = "color: #9a6a20; font-size: 13px; flex-shrink: 0;";
+      }
+
+      const titleSpan = document.createElement("span");
+      titleSpan.textContent = `Hunt ${q.manEaterName}`;
+      titleSpan.style.cssText = expired
+        ? "color: #9a8060; text-decoration: line-through; font-style: italic;"
+        : "color: #3d2614; font-weight: bold;";
+
+      header.append(statusDot, titleSpan);
+
+      const desc = document.createElement("div");
+      if (hasTrophy) {
+        desc.textContent = `Trophy in hand — return to ${q.villageName} to claim ${q.reward} pelts.`;
+        desc.style.cssText = "color: #5a7a3a; font-size: 12px; font-style: italic; padding-left: 22px;";
+      } else if (expired) {
+        desc.textContent = `Quest expired (Day ${expireDay}).`;
+        desc.style.cssText = "color: #9a5050; font-size: 12px; font-style: italic; padding-left: 22px;";
+      } else {
+        desc.textContent = `${questDescription(q)} ~${q.spawnMiles} mi ${q.spawnBearing} of ${q.villageName}. Expires Day ${expireDay}.`;
+        desc.style.cssText = "color: #7a5a30; font-size: 12px; font-style: italic; padding-left: 22px;";
+      }
 
       item.append(header, desc);
       list.appendChild(item);

@@ -32,6 +32,8 @@ function getContentRect(canvas: HTMLCanvasElement) {
 export class MapPinManager {
   private pins:         MapPin[]          = [];
   private wrappers:     HTMLDivElement[]  = [];
+  private bubbleEls:    HTMLElement[]     = [];
+  private stemEls:      HTMLElement[]     = [];
   private nameEls:      HTMLSpanElement[] = [];
   private editTriggers: (() => void)[]   = [];
 
@@ -119,6 +121,8 @@ export class MapPinManager {
     wrapper.append(bubble, stem, shadow);
     document.body.appendChild(wrapper);
     this.wrappers.push(wrapper);
+    this.bubbleEls.push(bubble);
+    this.stemEls.push(stem);
     this.nameEls.push(nameSpan);
 
     // ── Inline editing ─────────────────────────────────────────────────────
@@ -176,6 +180,14 @@ export class MapPinManager {
     return this.pins.find(p => p.id === id);
   }
 
+  updateColor(id: string, color: string): void {
+    const idx = this.pins.findIndex(p => p.id === id);
+    if (idx < 0) return;
+    this.pins[idx].color = color;
+    this.bubbleEls[idx].style.background = color;
+    this.stemEls[idx].style.background   = color;
+  }
+
   triggerEdit(index: number): void {
     this.editTriggers[index]?.();
   }
@@ -197,6 +209,10 @@ export class MapPinManager {
       this.wrappers[i].style.left = `${sx}px`;
       this.wrappers[i].style.top  = `${sy + SHADOW_H / 2}px`;
     }
+  }
+
+  getAll(): MapPin[] {
+    return this.pins;
   }
 
   getSaveData(): MapPin[] {

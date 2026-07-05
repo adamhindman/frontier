@@ -60,7 +60,6 @@ export class DroppedCanoeManager {
     el.src = canoeEmptyUrl;
     el.style.cssText = `
       position: fixed;
-      width: 64px;
       height: auto;
       image-rendering: pixelated;
       transform: translate(-50%, -50%);
@@ -90,6 +89,7 @@ export class DroppedCanoeManager {
 
   update() {
     const cr = getContentRect(this.canvas);
+    const canoePx = Math.round(50 * (cr.w / CANVAS_WIDTH));
     for (const item of this.items) {
       const worldX = (item.tileX + 0.5) * TILE_SIZE;
       const worldY = -(item.tileY + 0.5) * TILE_SIZE;
@@ -97,6 +97,7 @@ export class DroppedCanoeManager {
       const sy = cr.y + (0.5 - (worldY - this.camera.position.y) / CANVAS_HEIGHT) * cr.h;
       const onScreen = sx >= cr.x && sx <= cr.x + cr.w && sy >= cr.y && sy <= cr.y + cr.h;
       item.el.style.display = onScreen ? 'block' : 'none';
+      item.el.style.width = `${canoePx}px`;
       item.el.style.left = `${sx}px`;
       item.el.style.top  = `${sy}px`;
     }

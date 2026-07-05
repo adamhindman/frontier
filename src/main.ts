@@ -30,7 +30,8 @@ import {
   STRUCTURE_CONFIGS,
 } from "./structures";
 import { TimberPileManager } from "./timberPiles";
-import { saveGame, loadGame, deleteSave } from "./save";
+import { TrapManager } from "./traps";
+import { saveGame, loadGame, deleteSave, saveManualGame, loadManualGame, hasManualSave } from "./save";
 import { createRadialMenu } from "./radialMenu";
 import {
   sampleElevation,
@@ -54,6 +55,7 @@ import {
   getWeatherEffects,
   weatherLabel,
   resolveWeatherForTemp,
+  getSeasonLabel,
 } from "./weather";
 import { createWeatherOverlay } from "./weatherOverlay";
 import { MapPinManager } from "./mapPins";
@@ -65,6 +67,7 @@ import { AnimalManager, FishJumpEffect, RIFLE_RANGE } from "./animals";
 import { HuntingOverlay } from "./hunting";
 import { SettlementManager } from "./settlements";
 import { TraderManager } from "./traders";
+import { MANEATER_QUEST_EXPIRE_DAYS } from "./manEaterQuests";
 
 // --- Scene ---
 const scene = new THREE.Scene();
@@ -95,15 +98,23 @@ function layoutCanvas() {
 layoutCanvas();
 window.addEventListener("resize", layoutCanvas);
 
-// --- Seed: read from URL param; write it back so reloads preserve it ---
+// --- Seed: read from URL param; fall back to last-played seed; then default ---
 function resolveSeed(): string {
+  // Priority: URL param > sessionStorage (same-tab HMR reload) > lastSeed (new tab) > default
   const params = new URLSearchParams(window.location.search);
-  const s = params.get("seed");
-  if (s) return s;
+  const urlSeed = params.get("seed");
+  if (urlSeed) {
+    sessionStorage.setItem("currentSeed", urlSeed);
+    return urlSeed;
+  }
+  const sessionSeed = sessionStorage.getItem("currentSeed");
+  if (sessionSeed) return sessionSeed;
+  const resolved = localStorage.getItem("lastSeed") ?? SEED;
+  sessionStorage.setItem("currentSeed", resolved);
   const url = new URL(window.location.href);
-  url.searchParams.set("seed", SEED);
+  url.searchParams.set("seed", resolved);
   window.history.replaceState(null, "", url.toString());
-  return SEED;
+  return resolved;
 }
 const currentSeed = resolveSeed();
 let weatherSeed = Math.floor(Math.random() * 0x100000000);
@@ -272,21 +283,31 @@ const radialMenu = createRadialMenu(
         disabled: onWater || aboveTreeline || inShelter,
         action: () => placeCampfire(ptx, pty, 2),
       },
-      ...(() => {
-        const site = settlements.getProximitySite(ptx, pty);
-        if (!site) return [];
-        const label = site.type === 'settlement'
-          ? `Enter ${site.name}`
-          : `Visit ${site.name}`;
-        return [{
-          label,
-          action: () => {
-            stats.food  = FOOD_CAPACITY_LBS;
-            stats.water = WATER_CAPACITY_GAL;
-            showToast(`Resupplied at ${site.name}`);
+      {
+        label: "Use Item",
+        disabled: stats.medicine === 0 && stats.liquor === 0,
+        children: [
+          {
+            label: `Medicine 💊${stats.medicine > 1 ? ` ×${stats.medicine}` : ''}`,
+            disabled: stats.medicine === 0,
+            action: () => {
+              stats.medicine--;
+              stats.health = 100;
+              showHudMessage("Medicine taken — health restored");
+            },
           },
-        }];
-      })(),
+          {
+            label: `Liquor 🍶${stats.liquor > 1 ? ` ×${stats.liquor}` : ''}`,
+            disabled: stats.liquor === 0,
+            action: () => {
+              stats.liquor--;
+              stats.morale = Math.min(100, stats.morale + 60);
+              stats.warmth = Math.min(100, stats.warmth + 35);
+              showHudMessage("Liquor consumed — morale & warmth restored");
+            },
+          },
+        ],
+      },
       {
         label: "Build",
         children: (() => {
@@ -329,7 +350,7 @@ const radialMenu = createRadialMenu(
                 stats.activeAction = {
                   id: "build_canoe",
                   label: "Building canoe",
-                  durationDays: cfg.totalHours / 24,
+                  durationDays: cfg.totalHours / 24 / (stats.tools > 0 ? 2 : 1),
                   progressDays: 0,
                   structureIndex: idx,
                   timberPerHour,
@@ -362,12 +383,24 @@ const radialMenu = createRadialMenu(
                   stats.activeAction = {
                     id: "build_shelter",
                     label: "Building shelter",
-                    durationDays: cfg.totalHours / 24,
+                    durationDays: cfg.totalHours / 24 / (stats.tools > 0 ? 2 : 1),
                     progressDays: 0,
                     structureIndex: idx,
                     timberPerHour,
                   };
                 }
+              },
+            },
+            {
+              label: "Deadfall",
+              disabled: !daylight || onWater,
+              action: () => {
+                stats.activeAction = {
+                  id: "build_deadfall",
+                  label: "Setting deadfall trap",
+                  durationDays: 1 / 24,
+                  progressDays: 0,
+                };
               },
             },
           ];
@@ -388,7 +421,7 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.key === " ") {
     e.preventDefault();
-    radialMenu.openAtTile(player.tileX, player.tileY);
+    if (!traders.isTradingPaused()) radialMenu.openAtTile(player.tileX, player.tileY);
   }
   if (e.key === "Escape") {
     activityLog.close();
@@ -469,14 +502,22 @@ renderer.domElement.addEventListener("click", (e) => {
   const dx = cx - player.tileX, dy = cy - player.tileY;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
   const baseNdx = dx / len, baseNdy = dy / len;
-  const jitter = (Math.random() * 2 - 1) * (6 * Math.PI / 180);
+  const precision = stats.precisionRifle > 0;
+  const jitterDeg = precision ? 0.25 : 1;
+  const jitter = (Math.random() * 2 - 1) * (jitterDeg * Math.PI / 180);
   const cosJ = Math.cos(jitter), sinJ = Math.sin(jitter);
   const ndx = baseNdx * cosJ - baseNdy * sinJ;
   const ndy = baseNdx * sinJ + baseNdy * cosJ;
 
-  const result = animals.fireRay(player.tileX, player.tileY, ndx, ndy, RIFLE_RANGE);
+  const rifleRange = RIFLE_RANGE + (precision ? 2 : 0);
+  const result = animals.fireRay(player.tileX, player.tileY, ndx, ndy, rifleRange);
   animals.scareAll(player.tileX, player.tileY);
   stats.rifleAmmo--;
+
+  if (result.manEaterKilled) {
+    stats.trophies.push(result.manEaterKilled);
+    showHudMessage(`You've killed ${result.manEaterKilled.manEaterName}! Return to the village to claim your reward.`);
+  }
 
   // Bullet streak: player screen pos → endpoint screen pos
   const fromPos = getPlayerScreenPos();
@@ -496,6 +537,7 @@ const tileInspector = createTileInspector(
   () => playerMoving,
   () => manualPaused || blurPaused,
   () => huntingMode,
+  (tileX, tileY) => animals.getDescriptionAt(tileX, tileY) ?? settlements.getResidentDescriptionAt(tileX, tileY),
 );
 
 // --- Pause state ---
@@ -658,9 +700,46 @@ const hud = createHud(
   () => {
     activityLog.toggle();
   },
+  () => {
+    if (stats.medicine <= 0) return;
+    stats.medicine--;
+    stats.health = 100;
+    hud.flash("Medicine taken — health restored");
+  },
+  () => {
+    if (stats.liquor <= 0) return;
+    stats.liquor--;
+    stats.morale = Math.min(100, stats.morale + 60);
+    stats.warmth = Math.min(100, stats.warmth + 35);
+    hud.flash("Liquor consumed — morale & warmth restored");
+  },
+  () => {
+    if (stats.lodestone <= 0) return;
+    // Nameless ruin pins are placed by the quest system with id "ruins_N" and
+    // name "Nameless ruins". They exist at the target tile even before the player
+    // has visited the area, unlike ruin footprint sprites which are scattered on arrival.
+    const pins = mapPins.getAll();
+    let bestDist = Infinity, bestTileX = 0, bestTileY = 0, found = false;
+    for (const p of pins) {
+      if (!p.id.startsWith("ruins_") || p.name !== "Nameless ruins") continue;
+      const dx = p.tileX - player.tileX, dy = p.tileY - player.tileY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < bestDist) { bestDist = dist; bestTileX = p.tileX; bestTileY = p.tileY; found = true; }
+    }
+    if (!found) {
+      hud.flash("The lodestone is still.");
+      return;
+    }
+    const dx = bestTileX - player.tileX, dy = bestTileY - player.tileY;
+    const deg = ((Math.atan2(dx, -dy) * 180 / Math.PI) + 360) % 360;
+    const dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+    const bearing = dirs[Math.round(deg / 22.5) % 16];
+    hud.flash(`Lodestone: ruins to the ${bearing}`);
+  },
+  () => doManualSave(),
 );
 const updateHud = hud.update;
-const showHudMessage = hud.showMessage;
+const showHudMessage = hud.flash;
 const structures = new StructureManager(renderer.domElement, camera);
 const droppedCanoes = new DroppedCanoeManager(renderer.domElement, camera);
 const animals = new AnimalManager(
@@ -695,10 +774,13 @@ function tileToScreen(tileX: number, tileY: number): { x: number; y: number } {
   };
 }
 const timberPiles = new TimberPileManager(renderer.domElement, camera);
+const traps = new TrapManager(renderer.domElement, camera);
+// Tiles where a trap was just placed — skip the step-check until the player leaves and returns.
+const freshTrapTiles = new Set<string>();
 const mapPins = new MapPinManager(renderer.domElement, camera);
 const ruinSprites = new RuinSpriteManager(renderer.domElement, camera);
 const settlements = new SettlementManager(renderer.domElement, camera, elevation, moisture, river, currentSeed, mapPins);
-const traders = new TraderManager(renderer.domElement, camera);
+const traders = new TraderManager(renderer.domElement, camera, elevation, moisture, river);
 const quests = new QuestManager({
   onComplete: (q) => {
     if (q.type !== 'find_and_name') return;
@@ -718,7 +800,11 @@ const quests = new QuestManager({
     showQuestComplete(q, pendingCityName || completedPin?.name || 'the ruins', () => {});
   },
 });
-const questPanel = createQuestPanel(quests);
+const questPanel = createQuestPanel(
+  quests,
+  () => settlements.getAcceptedManEaterQuests(),
+  () => stats.trophies.map(t => t.questId),
+);
 // Capture the name here — onComplete fires synchronously inside notify, so this
 // is always the name that triggered the quest completion.
 let pendingCityName = '';
@@ -730,6 +816,29 @@ mapPins.onRename = (pinId, newName) => {
 // --- Persistence ---
 let startTileX = Math.floor(player.tileX);
 let startTileY = Math.floor(player.tileY);
+
+function doManualSave() {
+  if (gameOver) return;
+  saveManualGame(
+    currentSeed,
+    weatherSeed,
+    stats,
+    Math.floor(player.tileX),
+    Math.floor(player.tileY),
+    startTileX,
+    startTileY,
+    structures.getSaveData(),
+    droppedCanoes.getSaveData(),
+    timberPiles.getSaveData(),
+    mapPins.getSaveData(),
+    quests.getSaveData(),
+    traps.getSaveData(),
+    settlements.getManEaterQuestSaveData(),
+    animals.getManEaterSaveData(),
+  );
+  localStorage.setItem("lastSeed", currentSeed);
+  showHudMessage("Game saved.");
+}
 
 function doSave() {
   if (gameOver) return;
@@ -746,7 +855,11 @@ function doSave() {
     timberPiles.getSaveData(),
     mapPins.getSaveData(),
     quests.getSaveData(),
+    traps.getSaveData(),
+    settlements.getManEaterQuestSaveData(),
+    animals.getManEaterSaveData(),
   );
+  localStorage.setItem("lastSeed", currentSeed);
 }
 
 const save = loadGame(currentSeed);
@@ -763,6 +876,11 @@ if (save) {
     timberPiles.restorePile(p.tileX, p.tileY, p.amount);
   if (save.mapPins !== undefined) mapPins.restore(save.mapPins);
   if (save.quests !== undefined) quests.restore(save.quests);
+  for (const t of save.traps ?? [])
+    traps.restoreTrap(t.tileX, t.tileY, t.biome, t.ageHours ?? 0);
+  if (save.manEaterQuests) settlements.restoreManEaterQuests(save.manEaterQuests);
+  for (const m of save.activeManEaters ?? [])
+    animals.restoreManEater(m);
 }
 
 // On a fresh game, scan for a large lake shore to start near.
@@ -1018,6 +1136,15 @@ function isWaterBiome(tx: number, ty: number): boolean {
   return b === "deep_water" || b === "shallow_water";
 }
 
+function getBiomeAt(tx: number, ty: number): string {
+  return getBiome(
+    sampleElevation(tx, ty, elevation),
+    sampleMoisture(tx, ty, moisture),
+    sampleRiver(tx, ty, river),
+    sampleLake(tx, ty, river),
+  );
+}
+
 function adjacentWaterBiome(tx: number, ty: number): BiomeProperties | null {
   for (let ddx = -1; ddx <= 1; ddx++) {
     for (let ddy = -1; ddy <= 1; ddy++) {
@@ -1202,9 +1329,13 @@ function findLakeStartTile(): { tileX: number; tileY: number } | null {
 function canEnterTile(tx: number, ty: number): boolean {
   if (!isWaterBiome(tx, ty)) return true;
   if (stats.canoes > 0) return true; // canoe allows all water travel
-  // Allow wading 1 tile from land (any 8-neighbor is non-water)
-  for (let ddx = -1; ddx <= 1; ddx++) {
-    for (let ddy = -1; ddy <= 1; ddy++) {
+  // Deep water is impassable on foot regardless of waders.
+  const b = getBiomeAt(tx, ty);
+  if (b === 'deep_water') return false;
+  // Hip waders extend shallow-water wading range to 3 tiles from shore; default is 1.
+  const wadeRadius = stats.hipWaders > 0 ? 3 : 1;
+  for (let ddx = -wadeRadius; ddx <= wadeRadius; ddx++) {
+    for (let ddy = -wadeRadius; ddy <= wadeRadius; ddy++) {
       if (ddx === 0 && ddy === 0) continue;
       if (!isWaterBiome(tx + ddx, ty + ddy)) return true;
     }
@@ -1243,31 +1374,27 @@ canoeEl.style.cssText = `
 document.body.appendChild(canoeEl);
 
 // --- Status indicators (above player head) ---
-const snowflakeEl = document.createElement("div");
-snowflakeEl.textContent = "❄️";
-snowflakeEl.style.cssText = `
-  position: fixed;
-  font-size: 14px;
-  line-height: 1;
-  transform: translate(-50%, -100%);
-  pointer-events: none;
-  z-index: 601;
-  display: none;
-`;
-document.body.appendChild(snowflakeEl);
-
-const mendingHeartEl = document.createElement("div");
-mendingHeartEl.textContent = "❤️‍🩹";
-mendingHeartEl.style.cssText = `
-  position: fixed;
-  font-size: 14px;
-  line-height: 1;
-  transform: translate(-50%, -100%);
-  pointer-events: none;
-  z-index: 601;
-  display: none;
-`;
-document.body.appendChild(mendingHeartEl);
+function makeIndicatorEl(emoji: string): HTMLDivElement {
+  const el = document.createElement("div");
+  el.textContent = emoji;
+  el.style.cssText = `
+    position: fixed;
+    font-size: 14px;
+    line-height: 1;
+    transform: translate(-50%, -100%);
+    pointer-events: none;
+    z-index: 601;
+    display: none;
+  `;
+  document.body.appendChild(el);
+  return el;
+}
+const snowflakeEl    = makeIndicatorEl("❄️");
+const mendingHeartEl = makeIndicatorEl("❤️‍🩹");
+const energyLowEl   = makeIndicatorEl("⚡");
+const hungerEl       = makeIndicatorEl("🍖");
+const thirstEl       = makeIndicatorEl("💧");
+const allIndicators  = [snowflakeEl, mendingHeartEl, energyLowEl, hungerEl, thirstEl];
 
 // --- Survey mode ---
 let surveyOffsetX = 0;
@@ -1340,6 +1467,7 @@ function enterSurvey() {
 function exitSurvey() {
   surveyOffsetX = 0;
   surveyOffsetY = 0;
+  stats.activeAction = null;
   chunkManager.endSurvey();
   surveyLoadBar.style.display = "none";
 }
@@ -1384,26 +1512,6 @@ function getPlayerScreenPos() {
     x: cx + (0.5 + (wx - camera.position.x) / CANVAS_WIDTH) * w,
     y: cy + (0.5 - (wy - camera.position.y) / CANVAS_HEIGHT) * h,
   };
-}
-
-function showToast(message: string) {
-  const el = document.createElement('div');
-  el.textContent = message;
-  el.style.cssText = `
-    position: fixed; left: 50%; top: 30%;
-    transform: translateX(-50%);
-    background: rgba(14,14,14,0.92);
-    border: 1px solid rgba(255,255,255,0.15);
-    border-radius: 6px;
-    color: #d8c88a; font: 13px/1 monospace;
-    padding: 10px 20px;
-    pointer-events: none; z-index: 1800;
-    opacity: 1; transition: opacity 0.6s 1.4s ease-in;
-  `;
-  document.body.appendChild(el);
-  void el.offsetHeight;
-  el.style.opacity = '0';
-  setTimeout(() => el.remove(), 2200);
 }
 
 function showForageEmoji(emoji: string) {
@@ -1593,6 +1701,42 @@ function showGameOver() {
   });
 
   box.append(title, sub, btn);
+
+  if (hasManualSave(currentSeed)) {
+    const loadBtn = document.createElement("button");
+    loadBtn.textContent = "Load save";
+    loadBtn.style.cssText = `
+      background: rgba(40,40,80,0.9);
+      border: 1px solid rgba(120,120,200,0.4);
+      border-radius: 6px;
+      color: #a0a0e0;
+      font: 13px monospace;
+      padding: 10px 28px;
+      cursor: pointer;
+      margin-top: 10px;
+      display: block;
+      width: 100%;
+    `;
+    loadBtn.addEventListener("mouseenter", () => {
+      loadBtn.style.background = "rgba(60,60,120,0.95)";
+      loadBtn.style.color = "#d0d0ff";
+    });
+    loadBtn.addEventListener("mouseleave", () => {
+      loadBtn.style.background = "rgba(40,40,80,0.9)";
+      loadBtn.style.color = "#a0a0e0";
+    });
+    loadBtn.addEventListener("click", () => {
+      // Copy manual save into the auto-save slot so the normal load path picks it up.
+      const manual = loadManualGame(currentSeed);
+      if (manual) {
+        localStorage.setItem(`frontier_${currentSeed}`, JSON.stringify(manual));
+      }
+      localStorage.removeItem("manualPaused");
+      window.location.reload();
+    });
+    box.appendChild(loadBtn);
+  }
+
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 }
@@ -1612,7 +1756,7 @@ function tick() {
   lastTime = now;
   // Pause the simulation while the radial menu is open or the game is paused.
   const isPaused = manualPaused || blurPaused;
-  const effectiveDelta = isPaused || radialMenu.isOpen() ? 0 : delta;
+  const effectiveDelta = isPaused || radialMenu.isOpen() || traders.isTradingPaused() ? 0 : delta;
 
   const tx = Math.floor(player.tileX);
   const ty = Math.floor(player.tileY);
@@ -1627,19 +1771,24 @@ function tick() {
     currentBiome === "deep_water" || currentBiome === "shallow_water";
   const usingCanoe = inWater && stats.canoes > 0;
   const carryingCanoe = !inWater && stats.canoes > 0;
-  const inShelter = structures.playerInCompletedShelter(tx, ty);
+  const inShelter = structures.playerInCompletedShelter(tx, ty) || stats.activeAction?.sheltered === true;
   if (inShelter && !prevInShelter) autoDropCanoe(tx, ty);
   prevInShelter = inShelter;
   const currentTemp = ambientTempAt(tx, ty);
   const currentWeather = weatherSystem.getCurrentEvent(stats.daysTraveled);
   const resolvedWeather = resolveWeatherForTemp(currentWeather, currentTemp);
   const weatherEffects = getWeatherEffects(resolvedWeather);
+  // Low morale saps energy — small speed penalty below the "Weary" threshold.
+  const moraleMult = stats.morale < 40 ? 0.85 : 1;
+  const cramponsMult = stats.crampons > 0 && (currentBiome === 'mountains' || currentBiome === 'hills') ? 1.5 : 1;
   const effectiveSpeed =
     (usingCanoe
       ? 1.5
       : biomeProps.speedMultiplier * (carryingCanoe ? 0.45 : 1)) *
     getWeightMultiplier(stats) *
-    weatherEffects.moveMult;
+    weatherEffects.moveMult *
+    moraleMult *
+    cramponsMult;
 
   // Canoeing is easy; portaging is exhausting
   const effectiveBiome = usingCanoe
@@ -1647,7 +1796,7 @@ function tick() {
     : carryingCanoe
       ? {
           ...biomeProps,
-          energyDrainPerTile: biomeProps.energyDrainPerTile * 2.2,
+          energyDrainPerTile: biomeProps.energyDrainPerTile * 2.75,
         }
       : biomeProps;
 
@@ -1744,6 +1893,33 @@ function tick() {
   // Auto-pickup: collect a dropped canoe when walking onto its tile
   if (droppedCanoes.tryPickup(tx, ty)) stats.canoes++;
 
+  // Check deadfall traps when the player steps onto their tile.
+  // Skip tiles where a trap was just placed this step (player hasn't left yet).
+  {
+    const key = `${tx},${ty}`;
+    if (freshTrapTiles.has(key)) {
+      // Player is still standing on the tile where they just placed the trap — don't check it.
+      // (It will be cleared once they move off.)
+    } else {
+      const result = traps.checkStep(tx, ty);
+      if (result !== null) {
+        if (result.caught) {
+          stats.food  = Math.min(FOOD_CAPACITY_LBS, stats.food  + (result.meatLbs ?? 0));
+          stats.pelts = (stats.pelts ?? 0) + (result.pelts ?? 0);
+          showForageEmoji(result.emoji!);
+          showHudMessage(`Trap caught a ${result.emoji}! +${result.meatLbs} lbs`);
+        } else {
+          showHudMessage('Trap was empty.');
+        }
+      }
+    }
+    // Clear any fresh-trap markers for tiles the player has left.
+    for (const k of freshTrapTiles) {
+      const [fx, fy] = k.split(',').map(Number);
+      if (fx !== tx || fy !== ty) freshTrapTiles.delete(k);
+    }
+  }
+
   // Collect dead animals when the player walks onto their tile
   {
     const harvest = animals.collectAt(tx, ty);
@@ -1775,7 +1951,7 @@ function tick() {
         stats.activeAction = {
           id: `build_${type}` as 'build_canoe' | 'build_shelter',
           label: `Building ${cfg.label.toLowerCase()}`,
-          durationDays: cfg.totalHours / 24,
+          durationDays: cfg.totalHours / 24 / (stats.tools > 0 ? 2 : 1),
           progressDays: savedProgress,
           structureIndex: idx,
           timberPerHour: cfg.timberCost / cfg.totalHours,
@@ -1815,11 +1991,15 @@ function tick() {
   const fishBiome = inWater
     ? effectiveBiome
     : (adjacentWaterBiome(tx, ty) ?? undefined);
-  const warming: "campfire" | "shelter" | false = structures.isWarmed(tx, ty)
-    ? inShelter
-      ? "shelter"
-      : "campfire"
-    : false;
+  const warming: "campfire" | "shelter" | false = stats.activeAction?.sheltered
+    ? "shelter"
+    : structures.isWarmed(tx, ty)
+      ? inShelter
+        ? "shelter"
+        : "campfire"
+      : false;
+  // Heavy coat makes ambient temp feel 10°F warmer for warmth drain calculation.
+  const effectiveTemp = currentTemp + (stats.heavyCoat > 0 ? 10 : 0);
   const { timeTicking, forageEvents } = updateStats(
     stats,
     effectiveDelta,
@@ -1827,7 +2007,7 @@ function tick() {
     effectiveBiome,
     fishBiome,
     usingCanoe,
-    currentTemp,
+    effectiveTemp,
     warming,
     weatherEffects,
     carryingCanoe,
@@ -1912,7 +2092,15 @@ function tick() {
     exitSurvey();
   }
 
-  // Campfire fuel consumption: burns 1 timber per 2 game-hours from piles within 2 tiles.
+  // Deadfall trap placement: action completed → place trap at current tile.
+  if (prevAction?.id === "build_deadfall" && !stats.activeAction &&
+      prevAction.progressDays >= prevAction.durationDays) {
+    traps.add(tx, ty, currentBiome);
+    freshTrapTiles.add(`${tx},${ty}`);
+    showHudMessage("Deadfall set. 🪤");
+  }
+
+  // Campfire fuel consumption and trap checks share the same elapsed-time window.
   const gameDaysElapsed = stats.daysTraveled - prevDaysTraveled;
   if (gameDaysElapsed > 0) {
     for (const {
@@ -1924,6 +2112,9 @@ function tick() {
       const consumed = timberPiles.consumeFromAdjacent(ftx, fty, fuelNeeded, 2);
       if (consumed < fuelNeeded) structures.burnOut(index);
     }
+
+    // Age deadfall traps.
+    traps.advanceAge(gameDaysElapsed);
   }
 
   // Midnight recap: when a new game-day begins, record how far the player
@@ -1975,22 +2166,94 @@ function tick() {
     isPaused,
     playerElevFt,
     huntingMode,
+    getSeasonLabel(stats.daysTraveled),
   );
   updateNightOverlay(stats.daysTraveled);
   tileInspector.update();
   structures.update();
   droppedCanoes.update();
   timberPiles.update();
+  traps.update();
   ruinSprites.update();
   settlements.discover(tx, ty, startTileX, startTileY);
-  settlements.update();
-  traders.update(effectiveDelta, player.visualX, player.visualY);
-  animals.update(
+  settlements.update(
+    delta, tx, ty,
+    (site) => {
+      const vdx = site.centerTileX - startTileX, vdy = site.centerTileY - startTileY;
+      const vMiles = Math.sqrt(vdx * vdx + vdy * vdy) * MILES_PER_TILE;
+      traders.openVillageMenu(site.name, site.id, stats, vMiles);
+    },
+    (site) => {
+      const frac = stats.daysTraveled % 1;
+      const morning = 6 / 24;
+      const toNextDawn = frac < morning ? morning - frac : 1 + morning - frac;
+      const durationDays = toNextDawn < 2 / 24 ? toNextDawn + 1 : toNextDawn;
+      stats.activeAction = {
+        id: 'rest',
+        label: `Resting in ${site.name}`,
+        durationDays,
+        progressDays: 0,
+        energyMultiplier: 8,
+        sheltered: true,
+      };
+    },
+    traders.isTradingPaused(),
+    // Quest callbacks
+    (quest) => {
+      // Accept a man-eater quest: record day, spawn the animal
+      quest.acceptedDay = stats.daysTraveled;
+      quest.spawned = true;
+      animals.addManEater(quest.animalName, quest.spawnTileX, quest.spawnTileY, quest.id, quest.manEaterName);
+      // Place a vague map pin (centered on a 20-tile uncertainty circle)
+      const pinTileX = quest.spawnTileX + Math.round((Math.random() * 2 - 1) * 20);
+      const pinTileY = quest.spawnTileY + Math.round((Math.random() * 2 - 1) * 20);
+      const dx2 = pinTileX - startTileX, dy2 = pinTileY - startTileY;
+      const distMiles = Math.sqrt(dx2*dx2 + dy2*dy2) * MILES_PER_TILE;
+      mapPins.add({
+        id: `maneater_pin_${quest.id}`,
+        tileX: pinTileX, tileY: pinTileY,
+        name: `${quest.manEaterName}?`,
+        color: '#cc4444',
+        fixed: false,
+        dayPlaced: stats.daysTraveled,
+        elevationFt: 0,
+        biome: quest.biome,
+        distanceMiles: distMiles,
+        bearing: '',
+        notes: `Reported ${quest.animalName.toLowerCase()} — may not be exact`,
+      });
+      const qdx = quest.spawnTileX - player.tileX, qdy = quest.spawnTileY - player.tileY;
+      const qMiles = Math.round(Math.sqrt(qdx*qdx + qdy*qdy) * MILES_PER_TILE);
+      const qDeg = ((Math.atan2(qdx, -qdy) * 180 / Math.PI) + 360) % 360;
+      const qDirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+      const qBearing = qDirs[Math.round(qDeg / 22.5) % 16];
+      const expireDay = Math.floor(stats.daysTraveled) + MANEATER_QUEST_EXPIRE_DAYS + 1;
+      showHudMessage(`Quest accepted: Hunt ${quest.manEaterName} — last seen ~${qMiles} mi ${qBearing}. Expires Day ${expireDay}. Location marked on map.`);
+    },
+    (questId, pelts) => {
+      // Claim reward
+      const idx = stats.trophies.findIndex(t => t.questId === questId);
+      if (idx !== -1) stats.trophies.splice(idx, 1);
+      stats.pelts += pelts;
+      showHudMessage(`Reward claimed: +${pelts} pelts`);
+    },
+    stats.trophies,
+    stats.daysTraveled,
+  );
+  const homeDx = player.tileX - startTileX, homeDy = player.tileY - startTileY;
+  const milesFromStart = Math.sqrt(homeDx * homeDx + homeDy * homeDy) * MILES_PER_TILE;
+  traders.update(effectiveDelta, player.visualX, player.visualY, stats, milesFromStart);
+  const animalAttacks = animals.update(
     effectiveDelta,
     player.visualX,
     player.visualY,
     stats.daysTraveled,
+    playerMoving,
   );
+  for (const atk of animalAttacks) {
+    stats.health = Math.max(0, stats.health - atk.damage);
+    showHudMessage(`You've been attacked! -${atk.damage} health`);
+  }
   fishJumps.update(effectiveDelta, player.visualX, player.visualY);
   mapPins.update();
 
@@ -2021,18 +2284,25 @@ function tick() {
       playerEl.style.width  = `${playerPx}px`;
       playerEl.style.height = `${playerPx}px`;
     }
-    // Status indicators above the player sprite. Offset sideways when both show.
-    const cold = stats.warmth < 50;
-    const injured = stats.health < 50;
-    const both = cold && injured;
-    snowflakeEl.style.display = cold ? "block" : "none";
-    mendingHeartEl.style.display = injured ? "block" : "none";
-    if (cold || injured) {
+    // Status indicators above the player sprite — centered row, spaced 16px apart.
+    const activeIndicators: HTMLDivElement[] = [];
+    if (stats.warmth < 50)  activeIndicators.push(snowflakeEl);
+    if (stats.health < 50)  activeIndicators.push(mendingHeartEl);
+    if (stats.energy < 50)  activeIndicators.push(energyLowEl);
+    if (stats.food === 0)   activeIndicators.push(hungerEl);
+    if (stats.water === 0)  activeIndicators.push(thirstEl);
+
+    allIndicators.forEach(el => (el.style.display = "none"));
+    if (activeIndicators.length > 0) {
+      const spacing = 16;
+      const totalW  = (activeIndicators.length - 1) * spacing;
+      const startX  = pos.x - totalW / 2;
       const indicatorY = pos.y - 16;
-      snowflakeEl.style.left = `${pos.x + (both ? -9 : 0)}px`;
-      snowflakeEl.style.top = `${indicatorY}px`;
-      mendingHeartEl.style.left = `${pos.x + (both ? 9 : 0)}px`;
-      mendingHeartEl.style.top = `${indicatorY}px`;
+      activeIndicators.forEach((el, i) => {
+        el.style.display = "block";
+        el.style.left    = `${startX + i * spacing}px`;
+        el.style.top     = `${indicatorY}px`;
+      });
     }
   }
 
@@ -2041,7 +2311,8 @@ function tick() {
     const fromPos = getPlayerScreenPos();
     const mPos = huntingOverlay.getMouseScreenPos();
     const distPx = Math.sqrt((mPos.x - fromPos.x) ** 2 + (mPos.y - fromPos.y) ** 2);
-    huntingOverlay.update(delta, distPx * 0.07);
+    const wobbleAmp = distPx * (stats.precisionRifle > 0 ? 0.05 * 0.75 : 0.05);
+    huntingOverlay.update(delta, wobbleAmp);
   }
 
   renderer.render(scene, camera);

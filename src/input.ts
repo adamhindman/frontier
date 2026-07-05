@@ -9,10 +9,10 @@ export function createInputHandler(): InputState & { reset(): void } {
   const keys = { up: false, down: false, left: false, right: false } as InputState & { reset(): void };
 
   const map: Record<string, keyof InputState> = {
-    ArrowUp: 'up',    w: 'up',
-    ArrowDown: 'down', s: 'down',
-    ArrowLeft: 'left', a: 'left',
-    ArrowRight: 'right', d: 'right',
+    ArrowUp: 'up',
+    ArrowDown: 'down',
+    ArrowLeft: 'left',
+    ArrowRight: 'right',
   };
 
   keys.reset = () => { keys.up = keys.down = keys.left = keys.right = false; };

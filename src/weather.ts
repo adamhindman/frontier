@@ -26,14 +26,71 @@ function mulberry32(seed: number): () => number {
 
 const WEATHER_TYPES: WeatherType[] = ['clear', 'overcast', 'rain', 'thunderstorm', 'blizzard', 'fog'];
 
-const TRANSITIONS: Record<WeatherType, number[]> = {
-  clear:        [0.40, 0.35, 0.10, 0.02, 0.03, 0.10],
-  overcast:     [0.20, 0.25, 0.25, 0.10, 0.05, 0.15],
-  rain:         [0.10, 0.25, 0.30, 0.25, 0.05, 0.05],
-  thunderstorm: [0.08, 0.22, 0.35, 0.15, 0.10, 0.10],
-  blizzard:     [0.05, 0.15, 0.15, 0.05, 0.45, 0.15],
-  fog:          [0.30, 0.35, 0.20, 0.05, 0.05, 0.05],
+// Transition matrices per season — each row sums to 1.
+// Order: clear, overcast, rain, thunderstorm, blizzard, fog
+type TransitionTable = Record<WeatherType, number[]>;
+
+const TRANSITIONS_SPRING: TransitionTable = {
+  clear:        [0.35, 0.30, 0.18, 0.03, 0.02, 0.12],
+  overcast:     [0.18, 0.25, 0.28, 0.10, 0.04, 0.15],
+  rain:         [0.10, 0.25, 0.30, 0.22, 0.05, 0.08],
+  thunderstorm: [0.08, 0.22, 0.32, 0.18, 0.06, 0.14],
+  blizzard:     [0.10, 0.20, 0.18, 0.06, 0.32, 0.14],
+  fog:          [0.28, 0.35, 0.22, 0.05, 0.02, 0.08],
 };
+
+const TRANSITIONS_SUMMER: TransitionTable = {
+  clear:        [0.50, 0.25, 0.08, 0.07, 0.00, 0.10],
+  overcast:     [0.32, 0.25, 0.18, 0.16, 0.00, 0.09],
+  rain:         [0.15, 0.22, 0.25, 0.32, 0.00, 0.06],
+  thunderstorm: [0.14, 0.22, 0.28, 0.24, 0.00, 0.12],
+  blizzard:     [0.25, 0.28, 0.22, 0.12, 0.08, 0.05], // resolveWeatherForTemp converts to rain
+  fog:          [0.38, 0.32, 0.18, 0.07, 0.00, 0.05],
+};
+
+const TRANSITIONS_FALL: TransitionTable = {
+  clear:        [0.28, 0.35, 0.14, 0.02, 0.05, 0.16],
+  overcast:     [0.14, 0.28, 0.24, 0.07, 0.10, 0.17],
+  rain:         [0.08, 0.22, 0.30, 0.18, 0.12, 0.10],
+  thunderstorm: [0.07, 0.20, 0.30, 0.14, 0.14, 0.15],
+  blizzard:     [0.04, 0.14, 0.14, 0.04, 0.52, 0.12],
+  fog:          [0.20, 0.32, 0.24, 0.05, 0.08, 0.11],
+};
+
+const TRANSITIONS_WINTER: TransitionTable = {
+  clear:        [0.22, 0.40, 0.06, 0.00, 0.20, 0.12],
+  overcast:     [0.08, 0.26, 0.12, 0.02, 0.38, 0.14],
+  rain:         [0.05, 0.18, 0.18, 0.04, 0.44, 0.11],
+  thunderstorm: [0.04, 0.18, 0.20, 0.04, 0.42, 0.12],
+  blizzard:     [0.02, 0.10, 0.08, 0.02, 0.66, 0.12],
+  fog:          [0.18, 0.30, 0.14, 0.02, 0.24, 0.12],
+};
+
+const SEASON_TRANSITIONS = [
+  TRANSITIONS_SPRING,
+  TRANSITIONS_SUMMER,
+  TRANSITIONS_FALL,
+  TRANSITIONS_WINTER,
+];
+
+const DAYS_PER_MONTH  = 30;
+const MONTHS_PER_SEASON = 3;
+const DAYS_PER_SEASON = DAYS_PER_MONTH * MONTHS_PER_SEASON; // 90
+const DAYS_PER_YEAR   = DAYS_PER_SEASON * 4;               // 360
+
+function seasonIndex(daysTraveled: number): number {
+  return Math.floor((daysTraveled % DAYS_PER_YEAR) / DAYS_PER_SEASON);
+}
+
+export function getSeasonLabel(daysTraveled: number): string {
+  const SEASON_NAMES = ['Spring', 'Summer', 'Fall', 'Winter'];
+  const PHASE_NAMES  = ['Early', 'Mid', 'Late'];
+  const dayOfYear    = daysTraveled % DAYS_PER_YEAR;
+  const monthOfYear  = Math.floor(dayOfYear / DAYS_PER_MONTH);
+  const season       = Math.floor(monthOfYear / MONTHS_PER_SEASON);
+  const phase        = monthOfYear % MONTHS_PER_SEASON;
+  return `${PHASE_NAMES[phase]} ${SEASON_NAMES[season]}`;
+}
 
 function pickTransition(probs: number[], rand: number): WeatherType {
   let sum = 0;
@@ -111,9 +168,10 @@ export function createWeatherSystem(weatherSeed: number) {
   let lastType: WeatherType = 'clear';
 
   function generateNext() {
+    const transitions = SEASON_TRANSITIONS[seasonIndex(generatedUpToDays)];
     const type: WeatherType = events.length === 0
       ? 'clear'
-      : pickTransition(TRANSITIONS[lastType], rng());
+      : pickTransition(transitions[lastType], rng());
     const r = rng();
     const intensity: 1 | 2 | 3 = r < 0.55 ? 1 : r < 0.85 ? 2 : 3;
     const durationHours = 4 + Math.floor(rng() * 13);

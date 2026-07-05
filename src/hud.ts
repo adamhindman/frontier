@@ -1,6 +1,11 @@
 import type { PlayerStats } from "./playerStats";
 import { getMoraleLabel, getMoraleEmoji, getWarmthLabel } from "./playerStats";
 import { CANVAS_WIDTH, CANVAS_HEIGHT } from "./constants";
+import musketBasicUrl from "./assets/tiles/musket-basic.png";
+import musketAdvancedUrl from "./assets/tiles/musket-advanced.png";
+import peltUrl from "./assets/tiles/pelt-basic.png";
+import gearUrl from "./assets/tiles/gear.png";
+import itemsUrl from "./assets/tiles/items.png";
 
 function formatTime(daysFractional: number): string {
   const day = Math.floor(daysFractional) + 1;
@@ -90,6 +95,151 @@ export function getBottomBandHeight(): number {
   return totalBandSpace() - getTopBandHeight();
 }
 
+// Clickable or passive inventory item widget used in the right-side inventory strip.
+function makeItemWidget(
+  topLabel: string,
+  emoji: string,
+  clickable: boolean,
+  onClick?: () => void,
+  tooltip?: string,
+) {
+  const el = document.createElement("div");
+  el.style.cssText = `
+    position: relative;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+    width: 58px;
+    opacity: 1;
+    transition: opacity 0.12s;
+    pointer-events: ${clickable ? "auto" : "none"};
+    ${clickable ? "cursor: pointer;" : ""}
+  `;
+
+  const topEl = document.createElement("div");
+  topEl.textContent = topLabel;
+  topEl.style.cssText = "color: #555; font: 11px/1 monospace; letter-spacing: 0.08em;";
+
+  const iconWrap = document.createElement("div");
+  iconWrap.style.cssText = `
+    display: grid; place-items: center;
+    width: 40px; height: 40px; font-size: 20px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 8px;
+  `;
+  iconWrap.textContent = emoji;
+
+  const bottomEl = document.createElement("div");
+  bottomEl.style.cssText =
+    "color: #888; font: 11px/1 monospace; text-align: center; width: 100%;";
+
+  el.append(topEl, iconWrap, bottomEl);
+
+  if (tooltip) {
+    const tip = document.createElement("div");
+    tip.textContent = tooltip;
+    tip.style.cssText = `
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(14,14,14,0.95);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 5px;
+      color: #bbb;
+      font: 11px/1.5 monospace;
+      padding: 6px 10px;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 1100;
+    `;
+    el.appendChild(tip);
+    el.style.pointerEvents = "auto";
+    el.addEventListener("mouseenter", () => { tip.style.opacity = "1"; });
+    el.addEventListener("mouseleave", () => { tip.style.opacity = "0"; });
+  }
+
+  if (clickable && onClick) {
+    el.addEventListener("mouseenter", () => { el.style.opacity = "0.6"; });
+    el.addEventListener("mouseleave", () => { el.style.opacity = "1"; });
+    el.addEventListener("click", onClick);
+  }
+
+  return { el, bottomEl };
+}
+
+// A toggleable inventory-category icon. Clicking opens a popup column above it.
+function makeGroupWidget(emoji: string, topLabel: string) {
+  const wrapper = document.createElement("div");
+  wrapper.style.cssText =
+    "position: relative; display: none; align-items: center; flex-shrink: 0;";
+
+  const btn = document.createElement("div");
+  btn.style.cssText = `
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    flex-shrink: 0; width: 58px; cursor: pointer; pointer-events: auto;
+    opacity: 1; transition: opacity 0.12s;
+  `;
+
+  const topEl = document.createElement("div");
+  topEl.textContent = topLabel;
+  topEl.style.cssText = "color: #555; font: 11px/1 monospace; letter-spacing: 0.08em;";
+
+  const iconWrap = document.createElement("div");
+  iconWrap.style.cssText = `
+    display: grid; place-items: center; width: 40px; height: 40px; font-size: 20px;
+    background: rgba(255,255,255,0.06); border-radius: 8px;
+  `;
+  iconWrap.textContent = emoji;
+
+  const bottomEl = document.createElement("div");
+  bottomEl.style.cssText =
+    "color: #888; font: 11px/1 monospace; text-align: center; width: 100%;";
+
+  btn.append(topEl, iconWrap, bottomEl);
+  btn.addEventListener("mouseenter", () => { btn.style.opacity = "0.6"; });
+  btn.addEventListener("mouseleave", () => { btn.style.opacity = "1"; });
+
+  const popup = document.createElement("div");
+  popup.style.cssText = `
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    background: rgba(10,10,10,0.96);
+    border: 1px solid rgba(255,255,255,0.13);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+    z-index: 1050;
+    pointer-events: auto;
+  `;
+
+  wrapper.append(btn, popup);
+
+  let open = false;
+  function close() {
+    open = false;
+    popup.style.display = "none";
+  }
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    open = !open;
+    popup.style.display = open ? "flex" : "none";
+  });
+  popup.addEventListener("click", (e) => e.stopPropagation());
+  window.addEventListener("click", () => { if (open) close(); });
+
+  return { wrapper, iconWrap, bottomEl, popup, close };
+}
+
 export function createHud(
   seed?: string,
   onStopAction?: () => void,
@@ -98,6 +248,10 @@ export function createHud(
   onToggleQuests?: () => void,
   onQuestHover?: { enter: () => void; leave: () => void },
   onToggleLog?: () => void,
+  onUseMedicine?: () => void,
+  onUseLiquor?: () => void,
+  onUseLodestone?: () => void,
+  onSave?: () => void,
 ): {
   update: (
     stats: PlayerStats,
@@ -109,8 +263,9 @@ export function createHud(
     isPaused?: boolean,
     elevFt?: number,
     huntingMode?: boolean,
+    seasonStr?: string,
   ) => void;
-  showMessage: (msg: string) => void;
+  flash: (msg: string, durationMs?: number) => void;
 } {
   // ── Top bar ────────────────────────────────────────────────────────────
   const topBar = document.createElement("div");
@@ -124,11 +279,29 @@ export function createHud(
   `;
   document.body.appendChild(topBar);
 
-  const actionEl = document.createElement("span");
   const conditionsEl = document.createElement("span");
-
-  actionEl.style.color = "#90b8d0";
   conditionsEl.style.color = "#d08050";
+
+  topBar.append(conditionsEl);
+
+  // ── Status banner (top-center, below top bar) ──────────────────────────
+  const bannerEl = document.createElement("div");
+  bannerEl.style.cssText = `
+    position: fixed; top: 52px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(14,14,14,0.92);
+    border: 1px solid rgba(255,255,255,0.13);
+    border-radius: 6px;
+    padding: 8px 16px;
+    pointer-events: none; z-index: 1100;
+    opacity: 0; transition: opacity 0.2s ease;
+    white-space: nowrap;
+  `;
+  document.body.appendChild(bannerEl);
+
+  const bannerTextEl = document.createElement("span");
+  bannerTextEl.style.cssText = "color: #c8c0a0; font: 13px/1 monospace;";
+  bannerEl.appendChild(bannerTextEl);
 
   const stopBtn = document.createElement("button");
   stopBtn.textContent = "■ Stop";
@@ -153,8 +326,37 @@ export function createHud(
     stopBtn.style.borderColor = "rgba(255,255,255,0.15)";
   });
   if (onStopAction) stopBtn.addEventListener("click", onStopAction);
+  bannerEl.appendChild(stopBtn);
 
-  topBar.append(actionEl, stopBtn, conditionsEl);
+  let persistentMsg: string | null = null;
+  let persistentShowStop = false;
+  let transientMsg: string | null = null;
+  let transientTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function refreshBanner() {
+    const msg = transientMsg ?? persistentMsg;
+    if (msg) {
+      bannerTextEl.textContent = msg;
+      bannerEl.style.opacity = "1";
+      const showStop = !transientMsg && persistentShowStop;
+      stopBtn.style.display = showStop ? "inline-block" : "none";
+      bannerEl.style.pointerEvents = showStop ? "auto" : "none";
+    } else {
+      bannerEl.style.opacity = "0";
+      bannerEl.style.pointerEvents = "none";
+      stopBtn.style.display = "none";
+    }
+  }
+
+  function flash(msg: string, durationMs = 2500) {
+    transientMsg = msg;
+    if (transientTimer) clearTimeout(transientTimer);
+    transientTimer = setTimeout(() => {
+      transientMsg = null;
+      refreshBanner();
+    }, durationMs);
+    refreshBanner();
+  }
 
   // ── Top-right controls ────────────────────────────────────────────────
   const rightWrap = document.createElement("div");
@@ -241,18 +443,76 @@ export function createHud(
       onToggleLog();
     });
 
-  rightWrap.append(logBtn, questBtn, pauseBtn);
+  const saveBtn = document.createElement("button");
+  saveBtn.title = "Save game";
+  saveBtn.textContent = "💾";
+  saveBtn.style.cssText = `
+    background: none;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    color: #666;
+    font: 13px monospace;
+    line-height: 1;
+    padding: 2px 6px;
+    cursor: pointer;
+    pointer-events: auto;
+  `;
+  saveBtn.addEventListener("mouseenter", () => {
+    saveBtn.style.color = "#bbb";
+    saveBtn.style.borderColor = "rgba(255,255,255,0.3)";
+  });
+  saveBtn.addEventListener("mouseleave", () => {
+    saveBtn.style.color = "#666";
+    saveBtn.style.borderColor = "rgba(255,255,255,0.12)";
+  });
+  if (onSave) saveBtn.addEventListener("click", onSave);
+
+  rightWrap.append(saveBtn, logBtn, questBtn, pauseBtn);
 
   if (seed !== undefined) {
-    const seedLabel = document.createElement("span");
-    seedLabel.textContent = seed;
-    seedLabel.style.cssText =
-      "color: #555; font: 11px monospace; letter-spacing: 0.03em;";
+    const seedInput = document.createElement("input");
+    seedInput.value = seed;
+    seedInput.spellcheck = false;
+    seedInput.style.cssText = `
+      background: none;
+      border: none;
+      border-bottom: 1px solid rgba(255,255,255,0.12);
+      border-radius: 0;
+      color: #555;
+      font: 11px monospace;
+      letter-spacing: 0.03em;
+      width: 90px;
+      outline: none;
+      pointer-events: auto;
+      padding: 0 2px;
+    `;
+    seedInput.addEventListener("focus", () => {
+      seedInput.style.color = "#aaa";
+      seedInput.style.borderBottomColor = "rgba(255,255,255,0.35)";
+    });
+    seedInput.addEventListener("blur", () => {
+      seedInput.style.color = "#555";
+      seedInput.style.borderBottomColor = "rgba(255,255,255,0.12)";
+      if (!seedInput.value.trim()) seedInput.value = seed!;
+    });
 
-    const newWorldBtn = document.createElement("button");
-    newWorldBtn.textContent = "↺";
-    newWorldBtn.title = "New world";
-    newWorldBtn.style.cssText = `
+    function loadSeed() {
+      const s = seedInput.value.trim();
+      if (!s) return;
+      const url = new URL(window.location.href);
+      url.searchParams.set("seed", s);
+      window.location.href = url.toString();
+    }
+
+    seedInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); loadSeed(); }
+      e.stopPropagation(); // don't let typing trigger game hotkeys
+    });
+
+    const reloadBtn = document.createElement("button");
+    reloadBtn.textContent = "↺";
+    reloadBtn.title = "Load seed";
+    reloadBtn.style.cssText = `
       background: none;
       border: 1px solid rgba(255,255,255,0.12);
       border-radius: 4px;
@@ -263,22 +523,17 @@ export function createHud(
       cursor: pointer;
       pointer-events: auto;
     `;
-    newWorldBtn.addEventListener("mouseenter", () => {
-      newWorldBtn.style.color = "#bbb";
-      newWorldBtn.style.borderColor = "rgba(255,255,255,0.3)";
+    reloadBtn.addEventListener("mouseenter", () => {
+      reloadBtn.style.color = "#bbb";
+      reloadBtn.style.borderColor = "rgba(255,255,255,0.3)";
     });
-    newWorldBtn.addEventListener("mouseleave", () => {
-      newWorldBtn.style.color = "#666";
-      newWorldBtn.style.borderColor = "rgba(255,255,255,0.12)";
+    reloadBtn.addEventListener("mouseleave", () => {
+      reloadBtn.style.color = "#666";
+      reloadBtn.style.borderColor = "rgba(255,255,255,0.12)";
     });
-    newWorldBtn.addEventListener("click", () => {
-      const newSeed = Math.random().toString(36).substring(2, 10);
-      const url = new URL(window.location.href);
-      url.searchParams.set("seed", newSeed);
-      window.location.href = url.toString();
-    });
+    reloadBtn.addEventListener("click", loadSeed);
 
-    rightWrap.append(seedLabel, newWorldBtn);
+    rightWrap.append(seedInput, reloadBtn);
   }
 
   topBar.appendChild(rightWrap);
@@ -374,84 +629,59 @@ export function createHud(
   `;
 
   // Rifle widget
-  const rifleWidget = makeStatWidget("Rifle");
-  rifleWidget.iconWrap.textContent = "🔫";
-  rifleWidget.iconWrap.style.fontSize = "20px";
+  const rifleWidget = makeStatWidget("Musket");
+  const musketImg = document.createElement("img");
+  musketImg.src = musketBasicUrl;
+  musketImg.style.cssText = "width: 32px; height: 32px; object-fit: contain; image-rendering: pixelated;";
+  rifleWidget.iconWrap.appendChild(musketImg);
 
   // Pelts widget
   const peltsWidget = makeStatWidget("Pelts");
-  peltsWidget.iconWrap.textContent = "🧣";
-  peltsWidget.iconWrap.style.fontSize = "20px";
+  const peltImg = document.createElement("img");
+  peltImg.src = peltUrl;
+  peltImg.style.cssText = "width: 32px; height: 32px; object-fit: contain; image-rendering: pixelated;";
+  peltsWidget.iconWrap.appendChild(peltImg);
 
-  // Canoe indicator (clickable)
-  const canoeIndicator = document.createElement("div");
-  canoeIndicator.title = "Drop canoe";
-  canoeIndicator.style.cssText = `
-    display: none;
-    flex-direction: column;
-    align-items: center;
-    gap: 3px;
-    flex-shrink: 0;
-    cursor: pointer;
-    pointer-events: auto;
-    opacity: 1;
-    transition: opacity 0.12s;
-    width: 58px;
-  `;
+  // Equipment group: coat, waders, canoe
+  const equipGroup = makeGroupWidget("", "GEAR");
+  const equipImg = document.createElement("img");
+  equipImg.src = gearUrl;
+  equipImg.style.cssText = "width: 32px; height: 32px; object-fit: contain; image-rendering: pixelated;";
+  equipGroup.iconWrap.appendChild(equipImg);
+  const coatItem      = makeItemWidget("COAT",    "🧥", false, undefined, "Ambient temperature feels\n+10°F warmer");
+  const wadersItem    = makeItemWidget("WADERS",  "👖", false, undefined, "Cross shallow water\nwithout a canoe");
+  const cramponsItem  = makeItemWidget("CRAMPONS","🥾", false, undefined, "+50% speed in mountains\nand hills");
+  const toolsItem     = makeItemWidget("TOOLS",   "🧰", false, undefined, "Halves canoe and shelter\nbuild time");
+  const musketItem    = makeItemWidget("MUSKET",  "", false, undefined, "+2 range · less wobble\n· less inaccuracy");
+  const musketGearImg = document.createElement("img");
+  musketGearImg.style.cssText = "width: 32px; height: 32px; object-fit: contain; image-rendering: pixelated;";
+  musketGearImg.src = musketBasicUrl;
+  (musketItem.el.children[1] as HTMLElement).replaceChildren(musketGearImg);
+  const canoeItem     = makeItemWidget("DROP",    "🛶", true,  () => { onDropCanoe?.(); equipGroup.close(); }, "Drop canoe here\nto use later");
+  equipGroup.popup.append(coatItem.el, wadersItem.el, cramponsItem.el, toolsItem.el, musketItem.el, canoeItem.el);
 
-  const canoeTopLabel = document.createElement("div");
-  canoeTopLabel.textContent = "DROP";
-  canoeTopLabel.style.cssText =
-    "color: #555; font: 11px/1 monospace; letter-spacing: 0.08em;";
+  // Consumables group: liquor, medicine, lodestone
+  const consumGroup = makeGroupWidget("", "ITEMS");
+  const itemsImg = document.createElement("img");
+  itemsImg.src = itemsUrl;
+  itemsImg.style.cssText = "width: 32px; height: 32px; object-fit: contain; image-rendering: pixelated;";
+  consumGroup.iconWrap.appendChild(itemsImg);
+  const liquorItem    = makeItemWidget("LIQUOR",    "🍶", true, () => { onUseLiquor?.();    consumGroup.close(); }, "Restores morale & warmth");
+  const medicItem     = makeItemWidget("MEDICINE",  "💊", true, () => { onUseMedicine?.();  consumGroup.close(); }, "Fully restores health");
+  const lodestoneItem = makeItemWidget("LODESTONE", "🧲", true, () => { onUseLodestone?.(); },                      "Points toward the\nnearest nameless ruins");
+  consumGroup.popup.append(liquorItem.el, medicItem.el, lodestoneItem.el);
 
-  const canoeIconWrap = document.createElement("div");
-  canoeIconWrap.style.cssText = `
-    display: grid;
-    place-items: center;
-    width: 40px;
-    height: 40px;
-    font-size: 24px;
-    background: rgba(255,255,255,0.06);
-    border-radius: 8px;
-  `;
-  canoeIconWrap.textContent = "🛶";
-
-  const canoeCount = document.createElement("div");
-  canoeCount.style.cssText =
-    "color: #888; font: 11px/1 monospace; letter-spacing: 0.04em; text-align: center; width: 100%;";
-  canoeCount.textContent = "Canoe";
-
-  canoeIndicator.append(canoeTopLabel, canoeIconWrap, canoeCount);
-  canoeIndicator.addEventListener("mouseenter", () => {
-    canoeIndicator.style.opacity = "0.6";
-  });
-  canoeIndicator.addEventListener("mouseleave", () => {
-    canoeIndicator.style.opacity = "1";
-  });
-  if (onDropCanoe) canoeIndicator.addEventListener("click", onDropCanoe);
-
-  rightInventory.append(rifleWidget.el, peltsWidget.el, canoeIndicator);
+  rightInventory.append(rifleWidget.el, peltsWidget.el, equipGroup.wrapper, consumGroup.wrapper);
   bottomBar.append(rightInventory);
 
   // ── Layout: set bar heights to match letterbox bands ───────────────────
   function layout() {
     topBar.style.height = `${getTopBandHeight()}px`;
     bottomBar.style.height = `${getBottomBandHeight()}px`;
+    bannerEl.style.top = `${getTopBandHeight() + 8}px`;
   }
   layout();
   window.addEventListener("resize", layout);
-
-  // ── Temp message (e.g. "Out of ammunition") ───────────────────────────
-  let tempMessage = "";
-  let tempMsgTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  function showMessage(msg: string) {
-    tempMessage = msg;
-    if (tempMsgTimeout) clearTimeout(tempMsgTimeout);
-    tempMsgTimeout = setTimeout(() => {
-      tempMessage = "";
-    }, 2000);
-  }
 
   // ── Update (called every frame) ────────────────────────────────────────
   let prevWarmth = -1;
@@ -465,41 +695,44 @@ export function createHud(
     isPaused = false,
     elevFt?: number,
     huntingMode = false,
+    seasonStr?: string,
   ) {
     pauseBtn.textContent = isPaused ? "▶" : "⏸";
     pauseBtn.title = isPaused ? "Resume (P)" : "Pause (P)";
-    dayEl.textContent = formatTime(stats.daysTraveled);
+    dayEl.textContent = seasonStr
+      ? `${formatTime(stats.daysTraveled)} · ${seasonStr}`
+      : formatTime(stats.daysTraveled);
     milesEl.textContent = `${distanceStr} from start`;
     altEl.textContent =
       elevFt !== undefined ? `${elevFt.toLocaleString()} ft elevation` : "";
 
-    if (tempMessage) {
-      actionEl.textContent = `· ${tempMessage}`;
-      stopBtn.style.display = "none";
-    } else if (stats.activeAction) {
+    if (stats.activeAction) {
+      let actionText: string;
       if (isFinite(stats.activeAction.durationDays)) {
         const pct = Math.min(
           stats.activeAction.progressDays / stats.activeAction.durationDays,
           1,
         );
-        actionEl.textContent = `· ${stats.activeAction.label} ${Math.round(pct * 100)}%`;
+        actionText = `${stats.activeAction.label} · ${Math.round(pct * 100)}%`;
       } else {
         const hours = Math.floor(stats.activeAction.progressDays * 24);
-        actionEl.textContent = `· ${stats.activeAction.label} ${hours}h`;
+        actionText = `${stats.activeAction.label} · ${hours}h`;
       }
-      const showStop =
+      persistentMsg = actionText;
+      persistentShowStop =
         !isFinite(stats.activeAction.durationDays) ||
         stats.activeAction.id.startsWith("build_");
-      stopBtn.style.display = showStop ? "inline-block" : "none";
     } else if (huntingMode) {
-      actionEl.textContent = "· Hunting Mode 🔫";
-      stopBtn.style.display = "none";
+      persistentMsg = "Musket mode 🔫";
+      persistentShowStop = false;
+    } else if (portaging) {
+      persistentMsg = "😰 Portaging the canoe";
+      persistentShowStop = false;
     } else {
-      actionEl.textContent = portaging
-        ? "· NOTE: Portaging the canoe is slow and tiring"
-        : "";
-      stopBtn.style.display = "none";
+      persistentMsg = null;
+      persistentShowStop = false;
     }
+    refreshBanner();
 
     conditionsEl.textContent = stats.statusConditions
       .map((c) => `! ${c.label}`)
@@ -530,17 +763,41 @@ export function createHud(
     moraleWidget.iconWrap.textContent = getMoraleEmoji(stats.morale);
     moraleWidget.bottom.textContent = getMoraleLabel(stats.morale);
 
+    musketImg.src = stats.precisionRifle > 0 ? musketAdvancedUrl : musketBasicUrl;
     rifleWidget.bottom.textContent = `${stats.rifleAmmo}`;
     peltsWidget.bottom.textContent = `${stats.pelts}`;
 
-    if (stats.canoes > 0) {
-      canoeIndicator.style.display = "flex";
-      canoeCount.textContent =
-        stats.canoes > 1 ? `×${stats.canoes} Canoes` : "Canoe";
-    } else {
-      canoeIndicator.style.display = "none";
-    }
+    // Equipment popup items
+    coatItem.el.style.display     = stats.heavyCoat      > 0 ? "flex" : "none";
+    coatItem.bottomEl.textContent = stats.heavyCoat      > 1 ? `×${stats.heavyCoat}` : "Equipped";
+    wadersItem.el.style.display     = stats.hipWaders    > 0 ? "flex" : "none";
+    wadersItem.bottomEl.textContent = stats.hipWaders    > 1 ? `×${stats.hipWaders}` : "Equipped";
+    cramponsItem.el.style.display     = stats.crampons   > 0 ? "flex" : "none";
+    cramponsItem.bottomEl.textContent = "Equipped";
+    toolsItem.el.style.display     = stats.tools         > 0 ? "flex" : "none";
+    toolsItem.bottomEl.textContent = "Equipped";
+    musketItem.el.style.display     = stats.precisionRifle > 0 ? "flex" : "none";
+    musketItem.bottomEl.textContent = "Equipped";
+    musketGearImg.src = stats.precisionRifle > 0 ? musketAdvancedUrl : musketBasicUrl;
+    canoeItem.el.style.display     = stats.canoes        > 0 ? "flex" : "none";
+    canoeItem.bottomEl.textContent = stats.canoes        > 1 ? `×${stats.canoes}` : "Drop";
+    const equipCount = (stats.heavyCoat > 0 ? 1 : 0) + (stats.hipWaders > 0 ? 1 : 0)
+                     + (stats.crampons > 0 ? 1 : 0) + (stats.tools > 0 ? 1 : 0)
+                     + (stats.precisionRifle > 0 ? 1 : 0) + stats.canoes;
+    equipGroup.wrapper.style.display = equipCount > 0 ? "flex" : "none";
+    equipGroup.bottomEl.textContent = equipCount > 0 ? String(equipCount) : "";
+
+    // Consumables popup items
+    liquorItem.el.style.display = stats.liquor > 0 ? "flex" : "none";
+    liquorItem.bottomEl.textContent = stats.liquor > 1 ? `×${stats.liquor}` : "Use";
+    medicItem.el.style.display = stats.medicine > 0 ? "flex" : "none";
+    medicItem.bottomEl.textContent = stats.medicine > 1 ? `×${stats.medicine}` : "Use";
+    lodestoneItem.el.style.display = stats.lodestone > 0 ? "flex" : "none";
+    lodestoneItem.bottomEl.textContent = "Locate";
+    const consumCount = stats.liquor + stats.medicine + (stats.lodestone > 0 ? 1 : 0);
+    consumGroup.wrapper.style.display = consumCount > 0 ? "flex" : "none";
+    consumGroup.bottomEl.textContent = consumCount > 0 ? String(consumCount) : "";
   }
 
-  return { update: updateHud, showMessage };
+  return { update: updateHud, flash };
 }

@@ -145,8 +145,9 @@ export function createRadialMenu(
           background 0.08s;
       `;
 
-      if (!isDisabled && !isBack) {
-        // Number badge — counter excludes the back item so numbering starts at 1
+      if (!isBack) {
+        // Badge assigned to every non-Back item (including disabled) so the
+        // number is consistent regardless of which items are currently enabled.
         const badge = document.createElement("span");
         badge.textContent = String(++badgeCounter);
         badge.style.cssText = `
@@ -157,10 +158,10 @@ export function createRadialMenu(
           height: 16px;
           font-size: 10px;
           font-weight: bold;
-          color: #aaa;
-          background: rgba(255,255,255,0.08);
-          border: 1px solid rgba(255,255,255,0.18);
-          border-bottom: 2px solid rgba(255,255,255,0.12);
+          color: ${isDisabled ? '#444' : '#aaa'};
+          background: rgba(255,255,255,${isDisabled ? '0.04' : '0.08'});
+          border: 1px solid rgba(255,255,255,${isDisabled ? '0.08' : '0.18'});
+          border-bottom: 2px solid rgba(255,255,255,${isDisabled ? '0.05' : '0.12'});
           border-radius: 3px;
           flex-shrink: 0;
         `;
@@ -316,13 +317,17 @@ export function createRadialMenu(
 
     const num = parseInt(e.key, 10);
     if (!isNaN(num) && num >= 1) {
-      // Walk renderedItems with the same skip logic as the badge counter:
-      // skip disabled items and the Back item. Key N fires the Nth visible badge.
+      // Walk non-Back items by position (matching badge assignment).
+      // Skip only the Back item when counting; disabled items keep their slot
+      // but the key press is ignored when that slot is disabled.
       const rows = getRows();
       let count = 0;
       for (let i = 0; i < renderedItems.length; i++) {
-        if (renderedItems[i].label === '← Back' || renderedItems[i].disabled) continue;
-        if (++count === num) { e.preventDefault(); rows[i]?.click(); break; }
+        if (renderedItems[i].label === '← Back') continue;
+        if (++count === num) {
+          if (!renderedItems[i].disabled) { e.preventDefault(); rows[i]?.click(); }
+          break;
+        }
       }
     }
   });

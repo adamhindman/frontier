@@ -61,6 +61,10 @@ export class RuinSpriteManager {
     }
   }
 
+  getFootprintPositions(): { tileX: number; tileY: number }[] {
+    return this.ruins.map(r => ({ tileX: r.tileX, tileY: r.tileY }));
+  }
+
   update(): void {
     const cr    = getContentRect(this.canvasEl);
     const scale = cr.w / CANVAS_WIDTH;

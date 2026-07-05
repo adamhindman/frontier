@@ -246,8 +246,8 @@ describe('updateStats forage action', () => {
 // ─── createStats — new fields ────────────────────────────────────────────────
 
 describe('createStats new fields', () => {
-  it('initializes rifleAmmo to 999', () => {
-    expect(createStats().rifleAmmo).toBe(999);
+  it('initializes rifleAmmo to 50', () => {
+    expect(createStats().rifleAmmo).toBe(50);
   });
 
   it('initializes pelts to 0', () => {

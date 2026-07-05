@@ -7,6 +7,12 @@ export interface StatusCondition {
   label: string;
 }
 
+export interface Trophy {
+  questId:      string;
+  manEaterName: string;
+  animalName:   string;
+}
+
 // Represents a time-consuming activity performed while stationary.
 // Set stats.activeAction to start one; updateStats advances it and clears it on completion.
 export interface ActiveAction {
@@ -19,6 +25,7 @@ export interface ActiveAction {
   buildTileX?: number;     // tile where the player must stay (if different from structure tile)
   buildTileY?: number;
   energyMultiplier?: number; // multiplier on energy gain/drain for this action (default 1)
+  sheltered?: boolean;       // treat as inside a shelter (warmth protection, shelter rest bonus)
 }
 
 export interface PlayerStats {
@@ -41,8 +48,17 @@ export interface PlayerStats {
   daysTraveledSinceRest: number; // resets when a ≥1-day rest completes
   statusConditions: StatusCondition[];
   activeAction: ActiveAction | null;
-  rifleAmmo: number; // rounds remaining; starts at 999
+  rifleAmmo: number; // rounds remaining; starts at 50
   pelts: number;     // fur pelts collected; no capacity cap
+  heavyCoat: number; // count owned; each adds +10°F to effective ambient temp for warmth drain
+  hipWaders: number; // count owned; allows wading 3 tiles from shore instead of 1
+  liquor: number;         // consumable count; restores morale + warmth on use
+  medicine: number;       // consumable count; restores health on use
+  precisionRifle: number; // 1 when owned; increases range +2, wobble ×0.75, jitter ×0.5
+  lodestone: number;      // 1 when owned; click to get bearing to nearest nameless ruin
+  tools: number;          // 1 when owned; halves canoe and shelter build time
+  crampons: number;       // 1 when owned; +50% speed in mountains and hills
+  trophies: Trophy[];     // man-eater kills ready to claim as quest rewards
 }
 
 export const SECONDS_PER_DAY    = 120;
@@ -165,8 +181,17 @@ export function createStats(): PlayerStats {
     daysTraveledSinceRest: 0,
     statusConditions: [],
     activeAction: null,
-    rifleAmmo: 999,
+    rifleAmmo: 50,
     pelts: 0,
+    heavyCoat: 0,
+    hipWaders: 0,
+    liquor: 0,
+    medicine: 0,
+    precisionRifle: 0,
+    lodestone: 0,
+    tools: 1,
+    crampons: 1,
+    trophies: [],
   };
 }
 
@@ -335,7 +360,8 @@ export function updateStats(
 
     // Regeneration when well-supplied: health recovers proportional to morale,
     // morale recovers proportional to health. Shelter while resting multiplies both.
-    const shelterRestBonus = (warming === 'shelter' && stats.activeAction?.id === 'rest') ? 3 : 1;
+    const effectivelySheltered = warming === 'shelter' || stats.activeAction?.sheltered === true;
+    const shelterRestBonus = (effectivelySheltered && stats.activeAction?.id === 'rest') ? 3 : 1;
     if (stats.food > 0 && stats.water > 0 && stats.energy > 0 && stats.health > 0) {
       if (stats.health < 100)
         stats.health = Math.min(100, stats.health + gameDays * HEALTH_REGEN_PER_DAY_MAX * shelterRestBonus);
@@ -433,6 +459,19 @@ export function updateStats(
           stats.waterConsumed += w - stats.water; }
         if (stats.activeAction.progressDays >= stats.activeAction.durationDays) {
           stats.activeAction = null;
+        }
+      } else if (stats.activeAction.id === 'build_deadfall') {
+        if (!isDaylight(stats.daysTraveled)) {
+          stats.activeAction = null;
+        } else {
+          { const f = stats.food, w = stats.water;
+            stats.food  = Math.max(0, stats.food  - gameDays * FORAGE_FOOD_DRAIN_PER_DAY);
+            stats.water = Math.max(0, stats.water - gameDays * FORAGE_WATER_DRAIN_PER_DAY);
+            stats.foodConsumed  += f - stats.food;
+            stats.waterConsumed += w - stats.water; }
+          if (stats.activeAction.progressDays >= stats.activeAction.durationDays) {
+            stats.activeAction = null;
+          }
         }
       } else if (stats.activeAction.id === 'harvest_timber') {
         // Timber can be chopped at night.

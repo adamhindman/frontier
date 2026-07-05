@@ -4,8 +4,7 @@ import { TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
 import { sampleElevation, sampleMoisture, sampleRiver, sampleLake } from './noise';
 import { getBiome, BIOMES, getTileResources } from './biomes';
 import { canvasCoordsToTile } from './coordinates';
-
-const INTENT_DELAY_MS = 300;
+import { getTopBandHeight, getBottomBandHeight } from './hud';
 
 function capitalize(s: string) {
   return s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -49,6 +48,7 @@ export function createTileInspector(
   isMoving: () => boolean = () => false,
   isPaused: () => boolean = () => false,
   isHunting: () => boolean = () => false,
+  getEntityAt: (tileX: number, tileY: number) => string | null = () => null,
 ): { update: () => void } {
   // --- Tooltip ---
   const tooltip = document.createElement('div');
@@ -81,19 +81,64 @@ export function createTileInspector(
   highlight.visible = false;
   scene.add(highlight);
 
-  let intentTimer: ReturnType<typeof setTimeout> | null = null;
+  // Mouse position, tracked for click handling.
+  let hoverTileX = 0, hoverTileY = 0;
+  let hoverInBounds = false;
+
+  // Which tile has the active pinned tooltip (null = none).
+  let pinnedTileX: number | null = null;
+  let pinnedTileY: number | null = null;
 
   function hideTooltip() {
-    if (intentTimer !== null) { clearTimeout(intentTimer); intentTimer = null; }
     tooltip.style.opacity = '0';
-    highlight.visible = false;
+    pinnedTileX = null;
+    pinnedTileY = null;
   }
 
-  canvas.addEventListener('mousemove', (e) => {
-    if (intentTimer !== null) { clearTimeout(intentTimer); intentTimer = null; }
+  function showTooltipAt(tileX: number, tileY: number, clientX: number, clientY: number) {
+    // Entity first (animal or NPC); fall back to tile info.
+    const entityDesc = getEntityAt(tileX, tileY);
+    if (entityDesc !== null) {
+      tooltip.textContent = entityDesc;
+    } else {
+      const elev     = sampleElevation(tileX, tileY, elevNoise);
+      const moist    = sampleMoisture(tileX, tileY, moistNoise);
+      const riverVal = sampleRiver(tileX, tileY, riverNoise);
+      const lakeVal  = sampleLake(tileX, tileY, riverNoise);
+      const biome    = getBiome(elev, moist, riverVal, lakeVal);
+      const props = BIOMES[biome];
+      const res   = getTileResources(biome);
+      tooltip.textContent = [
+        capitalize(biome),
+        `Tile     (${tileX}, ${tileY})`,
+        `Elev     ${formatElevation(elev)}`,
+        `Moisture ${formatMoisture(moist)}`,
+        `Speed    ×${props.speedMultiplier.toFixed(2)}`,
+        ``,
+        `Plants   ${res.plants}`,
+        `Game     ${res.game}`,
+        `Water    ${res.water}`,
+        `Timber   ${res.timber}`,
+        `Minerals ${res.minerals}`,
+      ].join('\n');
+    }
 
+    // Position near click, flip to stay on screen.
+    const tr = tooltip.getBoundingClientRect();
+    const tx = clientX + 16 + tr.width  > window.innerWidth  ? clientX - 16 - tr.width  : clientX + 16;
+    const ty = clientY - 10 + tr.height > window.innerHeight ? clientY - 10 - tr.height : clientY - 10;
+    tooltip.style.left = `${tx}px`;
+    tooltip.style.top  = `${ty}px`;
+    tooltip.style.opacity = '1';
+
+    pinnedTileX = tileX;
+    pinnedTileY = tileY;
+  }
+
+  // Highlight follows mouse hover.
+  canvas.addEventListener('mousemove', (e) => {
     if (isMenuOpen() || isPaused() || isHunting()) {
-      hideTooltip();
+      hoverInBounds = false;
       highlight.visible = false;
       return;
     }
@@ -101,9 +146,12 @@ export function createTileInspector(
     const cr = getContentRect(canvas);
     const lx = e.clientX - cr.x;
     const ly = e.clientY - cr.y;
+    const topBand    = getTopBandHeight();
+    const bottomBand = getBottomBandHeight();
 
-    if (lx < 0 || lx > cr.w || ly < 0 || ly > cr.h) {
-      hideTooltip();
+    if (lx < 0 || lx > cr.w || ly < 0 || ly > cr.h
+        || e.clientY < topBand || e.clientY > window.innerHeight - bottomBand) {
+      hoverInBounds = false;
       highlight.visible = false;
       return;
     }
@@ -111,53 +159,46 @@ export function createTileInspector(
     const cx = (lx / cr.w) * CANVAS_WIDTH;
     const cy = (ly / cr.h) * CANVAS_HEIGHT;
     const { tileX, tileY } = canvasCoordsToTile(cx, cy, camera.position.x, camera.position.y);
+    hoverTileX = tileX;
+    hoverTileY = tileY;
+    hoverInBounds = true;
 
     highlight.position.x = (tileX + 0.5) * TILE_SIZE;
     highlight.position.y = -(tileY + 0.5) * TILE_SIZE;
     highlight.visible = !isMoving();
-
-    // Always update content and position so it's ready when the timer fires.
-    const elev     = sampleElevation(tileX, tileY, elevNoise);
-    const moist    = sampleMoisture(tileX, tileY, moistNoise);
-    const riverVal = sampleRiver(tileX, tileY, riverNoise);
-    const lakeVal  = sampleLake(tileX, tileY, riverNoise);
-    const biome    = getBiome(elev, moist, riverVal, lakeVal);
-    const props = BIOMES[biome];
-    const res   = getTileResources(biome);
-    tooltip.textContent = [
-      capitalize(biome),
-      `Tile     (${tileX}, ${tileY})`,
-      `Elev     ${formatElevation(elev)}`,
-      `Moisture ${formatMoisture(moist)}`,
-      `Speed    ×${props.speedMultiplier.toFixed(2)}`,
-      ``,
-      `Plants   ${res.plants}`,
-      `Game     ${res.game}`,
-      `Water    ${res.water}`,
-      `Timber   ${res.timber}`,
-      `Minerals ${res.minerals}`,
-    ].join('\n');
-
-    // Position tooltip now (getBoundingClientRect works even at opacity 0).
-    const tr = tooltip.getBoundingClientRect();
-    const tx = e.clientX + 16 + tr.width  > window.innerWidth  ? e.clientX - 16 - tr.width  : e.clientX + 16;
-    const ty = e.clientY - 10 + tr.height > window.innerHeight ? e.clientY - 10 - tr.height  : e.clientY - 10;
-    tooltip.style.left = `${tx}px`;
-    tooltip.style.top  = `${ty}px`;
-
-    if (!isMoving()) {
-      intentTimer = setTimeout(() => { tooltip.style.opacity = '1'; }, INTENT_DELAY_MS);
-    }
   });
 
   canvas.addEventListener('mouseleave', () => {
-    hideTooltip();
+    hoverInBounds = false;
     highlight.visible = false;
   });
 
-  // Called every tick so movement hides the tooltip even when the mouse is still.
+  // Click the pinned tile to dismiss; click anywhere else to dismiss without opening a new one.
+  canvas.addEventListener('click', (e) => {
+    if (isMenuOpen() || isPaused() || isHunting()) return;
+    if (!hoverInBounds) return;
+
+    if (pinnedTileX === null) {
+      // Nothing pinned — open on this tile.
+      showTooltipAt(hoverTileX, hoverTileY, e.clientX, e.clientY);
+    } else {
+      // Already pinned — always dismiss, regardless of which tile was clicked.
+      hideTooltip();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && pinnedTileX !== null) hideTooltip();
+  });
+
+  // Called every frame — hide tooltip when player moves.
   function update() {
-    if (isMoving() || isMenuOpen() || isPaused() || isHunting()) hideTooltip();
+    if (isMoving() || isMenuOpen() || isPaused() || isHunting()) {
+      if (pinnedTileX !== null) hideTooltip();
+      highlight.visible = false;
+    } else if (hoverInBounds) {
+      highlight.visible = true;
+    }
   }
 
   return { update };

@@ -54,3 +54,29 @@ You can wade one tile from the shoreline on foot. Open water requires a canoe �
 
 ### Inventory (`I`)
 Shows current quantities and capacities: food, water, timber, minerals, canoes.
+
+## TODO
+
+### Quests
+- [ ] **Hunt a mythical creature** — quest to track and kill a unicorn, dragon, T-Rex, or other mythical animal; may require traveling to a specific biome
+- [ ] **Race another expedition** — a rival expedition is also heading toward a named landmark; reach it first
+- [ ] **Reach a specific elevation** — climb to a tile above N feet; could chain into mountain-range exploration quests
+- [ ] **Prospect for minerals** — find a tile with minerals above a threshold; may introduce a mineral-survey tool or lodestone variant
+- [ ] **Document animal species** — observe N distinct species in survey mode; introduces a field journal / bestiary
+- [ ] **Barter a trade route** — visit two villages and complete a trade at each; introduces inter-village economy
+
+### Mechanics under consideration
+
+#### Trade route / settlement founding
+Build a chain of shelters connecting your origin to a distant village. Once the route is established:
+- The village upgrades to a settlement (larger, more residents, more buildings)
+- Trade stock increases (more quantity, more item types)
+- Prices drop (surcharge reduced or eliminated for that location)
+
+**Design notes:**
+- Shelters must be spaced at intervals — far enough apart to require real route-planning (suggested: each shelter at least 5 miles from the last, no more than 15 miles from the next)
+- Shelters along the route should be nameable (map pin auto-placed on completion)
+- The quest triggers when the player enters a village with no existing trade route; the target shelter count scales with distance to the village
+- "Upgrade to settlement" means swapping the village's map pin color/label, expanding its building footprint, and increasing its `TraderStock` quantities
+- Price reduction could be implemented as a negative surcharge stored on the settlement site, bypassing the distance-based formula
+- A village can only have one trade route; completing a second route to an already-upgraded settlement could instead unlock a unique item or quest reward
