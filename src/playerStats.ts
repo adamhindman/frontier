@@ -99,7 +99,7 @@ const SPOILAGE_MIN_PER_DAY  = 1.0;  // floor: always lose at least this much if 
 
 const REST_FOOD_DRAIN_PER_DAY   = 3.4;  // lbs/day (on top of background → ~4.3 total)
 const REST_WATER_DRAIN_PER_DAY  = 1.0;  // gal/day (on top of background → ~1.5 total)
-const REST_ENERGY_GAIN_PER_DAY  = 31.25;
+const REST_ENERGY_GAIN_PER_DAY  = 39.0625; // 31.25 + 25%
 
 const FORAGE_FOOD_DRAIN_PER_DAY    = 2.7; // lbs/day (on top of background → ~3.6 total)
 const FORAGE_WATER_DRAIN_PER_DAY   = 0.5; // gal/day (on top of background → ~1.0 total)
