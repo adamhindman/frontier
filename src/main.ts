@@ -247,7 +247,7 @@ const radialMenu = createRadialMenu(
       },
       {
         label: "Forage",
-        disabled: !daylight || inShelter,
+        disabled: inShelter,
         action: () => {
           stats.activeAction = {
             id: "forage",
