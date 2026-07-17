@@ -2134,7 +2134,7 @@ let autoWalkDy = 0;
 let prevWalkTileX = Math.floor(player.tileX);
 let prevWalkTileY = Math.floor(player.tileY);
 let cmdDownTime = 0;
-const CMD_LONGPRESS_MS = 500;
+const CMD_LONGPRESS_MS = 32;
 
 function tick() {
   if (gameOver) return;
