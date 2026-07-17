@@ -3,10 +3,16 @@ import { getTopBandHeight } from "./hud";
 import type { ManEaterQuest } from "./manEaterQuests";
 import { questDescription, MANEATER_QUEST_EXPIRE_DAYS } from "./manEaterQuests";
 
+export interface CapitalInfo {
+  distanceMi: number;
+  bearing: string;
+}
+
 export function createQuestPanel(
   questManager: QuestManager,
   getManEaterQuests: () => ManEaterQuest[] = () => [],
   getTrophyQuestIds: () => string[] = () => [],
+  getCapitalInfo: () => CapitalInfo | null = () => null,
 ) {
   const panel = document.createElement("div");
   panel.style.cssText = `
@@ -72,12 +78,38 @@ export function createQuestPanel(
     const quests = questManager.getAll();
     const manEaterQuests = getManEaterQuests();
     const trophyQuestIds = new Set(getTrophyQuestIds());
+    const capitalInfo = getCapitalInfo();
+
+    if (capitalInfo) {
+      const item = document.createElement("div");
+      item.style.cssText = "display: flex; flex-direction: column; gap: 3px;";
+
+      const header = document.createElement("div");
+      header.style.cssText = "display: flex; align-items: baseline; gap: 8px;";
+
+      const statusDot = document.createElement("span");
+      statusDot.textContent = "★";
+      statusDot.style.cssText = "color: #9a6a20; font-size: 13px; flex-shrink: 0;";
+
+      const titleSpan = document.createElement("span");
+      titleSpan.textContent = "The Capital";
+      titleSpan.style.cssText = "color: #3d2614; font-weight: bold;";
+
+      header.append(statusDot, titleSpan);
+
+      const desc = document.createElement("div");
+      desc.textContent = `~${capitalInfo.distanceMi.toFixed(0)} mi ${capitalInfo.bearing} of your starting camp.`;
+      desc.style.cssText = "color: #7a5a30; font-size: 12px; font-style: italic; padding-left: 22px;";
+
+      item.append(header, desc);
+      list.appendChild(item);
+    }
 
     const showCompleted = toggleCheck.checked;
     const visibleQuests = showCompleted ? quests : quests.filter(q => q.status !== "complete");
     const visibleManEater = showCompleted ? manEaterQuests : manEaterQuests.filter(q => !q.completed);
 
-    if (visibleQuests.length === 0 && visibleManEater.length === 0) {
+    if (visibleQuests.length === 0 && visibleManEater.length === 0 && !capitalInfo) {
       const empty = document.createElement("div");
       empty.textContent = quests.length === 0 && manEaterQuests.length === 0
         ? "No quests yet."

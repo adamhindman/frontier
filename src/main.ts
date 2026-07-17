@@ -1085,6 +1085,15 @@ const questPanel = createQuestPanel(
   quests,
   () => settlements.getAcceptedManEaterQuests(),
   () => stats.trophies.map(t => t.questId),
+  () => {
+    if (!capitalUnlocked) return null;
+    const dx = capitalTileX - startTileX;
+    const dy = capitalTileY - startTileY;
+    const distanceMi = Math.sqrt(dx * dx + dy * dy) * MILES_PER_TILE;
+    const angleDeg = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
+    const bearing = COMPASS_DIRS[Math.round(angleDeg / 22.5) % 16];
+    return { distanceMi, bearing };
+  },
 );
 // Capture the name here — onComplete fires synchronously inside notify, so this
 // is always the name that triggered the quest completion.
