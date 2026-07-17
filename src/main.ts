@@ -630,21 +630,56 @@ function updatePauseState() {
   pauseOverlay.style.display = manualPaused || blurPaused ? "flex" : "none";
 }
 
+// Clear any held-key/long-press state at the moment pause engages, so a key that's
+// physically still held (or released while paused, swallowing its keyup) can't leave
+// stale input state that causes movement or an auto-walk toggle right after resuming.
+function clearInputStateForPause() {
+  input.reset();
+  cmdDownTime = 0;
+}
+
 function toggleManualPause() {
   manualPaused = !manualPaused;
   localStorage.setItem("manualPaused", String(manualPaused));
+  if (manualPaused) clearInputStateForPause();
   updatePauseState();
 }
 
 // Auto-pause when window loses focus. Only P resumes — no click or accidental keypress can do it.
 window.addEventListener("blur", () => {
   blurPaused = true;
+  clearInputStateForPause();
   updatePauseState();
 });
 // Also pause when the tab/page is hidden (covers sleep/wake and tab switches that don't fire blur).
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { blurPaused = true; updatePauseState(); }
+  if (document.hidden) { blurPaused = true; clearInputStateForPause(); updatePauseState(); }
 });
+
+// --- Global pause input gate ---
+// Runs in the capture phase on window, which fires before every other listener in the
+// document (including ones added later by trader/settlement/radial-menu dialogs), so it
+// is the single choke point that guarantees "nothing happens" while paused rather than
+// relying on every individual click/keydown handler to remember to check pause state.
+// keyup is intentionally NOT blocked — clearInputStateForPause() already neutralizes any
+// held-key state at the moment pause engages, so letting keyup through avoids a stuck-key
+// bug where releasing a key during pause would otherwise never clear it.
+window.addEventListener("keydown", (e) => {
+  if (!(manualPaused || blurPaused)) return;
+  if (e.key === "p" || e.key === "P") return; // the sole resume action
+  if (e.metaKey && e.key === "\\") return; // dev debug-panel toggle; doesn't touch game state
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
+
+for (const type of ["click", "mousedown", "pointerdown", "dblclick", "contextmenu"]) {
+  window.addEventListener(type, (e) => {
+    if (manualPaused || blurPaused) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }, true);
+}
 
 // --- Hunting vignette ---
 const huntingVignette = document.createElement("div");
@@ -2327,7 +2362,12 @@ function tick() {
   if (playerMoving) {
     radialMenu.closeAll();
     const id = stats.activeAction?.id;
-    if (id === "forage" || id === "harvest_timber" || id === "harvest_minerals")
+    // "rest" must be cancelled on movement too: village rest sets `sheltered: true`
+    // on the action itself (not tied to actually standing in a shelter), which hides
+    // the player sprite via `inShelter`. Nothing else stops the player from walking
+    // away mid-rest, so without this the sprite stays invisible — on whatever tile
+    // they wander onto — until the (fast-forwarded) rest naturally completes.
+    if (id === "forage" || id === "harvest_timber" || id === "harvest_minerals" || id === "rest")
       stats.activeAction = null;
   }
 
@@ -2464,11 +2504,15 @@ function tick() {
   }
 
 
-  weatherOverlay.update(
-    resolvedWeather,
-    effectiveDelta / SECONDS_PER_DAY,
-    inShelter,
-  );
+  // Particle animation advances a fixed step per call regardless of the delta
+  // argument, so it must be skipped outright while paused rather than fed 0.
+  if (!isPaused) {
+    weatherOverlay.update(
+      resolvedWeather,
+      effectiveDelta / SECONDS_PER_DAY,
+      inShelter,
+    );
+  }
 
   // Deduct timber from adjacent piles once per build hour crossed
   if (
@@ -2680,7 +2724,7 @@ function tick() {
   }
   hud.updateVisited(visitedLocations, tx, ty);
   settlements.update(
-    delta, tx, ty,
+    effectiveDelta, tx, ty,
     (site) => {
       const vdx = site.centerTileX - startTileX, vdy = site.centerTileY - startTileY;
       const vMiles = Math.sqrt(vdx * vdx + vdy * vdy) * MILES_PER_TILE;
@@ -2814,12 +2858,14 @@ function tick() {
   }
 
   // Hunting reticle wobble: amplitude scales with distance, settles after ~1.5s of stillness.
-  if (huntingMode) {
+  // Skipped entirely while paused — the reticle also re-centers on the live mouse
+  // position each call, so feeding it a frozen delta alone isn't enough to stop it.
+  if (huntingMode && !isPaused) {
     const fromPos = getPlayerScreenPos();
     const mPos = huntingOverlay.getMouseScreenPos();
     const distPx = Math.sqrt((mPos.x - fromPos.x) ** 2 + (mPos.y - fromPos.y) ** 2);
     const wobbleAmp = distPx * (stats.precisionRifle > 0 ? 0.05 * 0.75 : 0.05);
-    huntingOverlay.update(delta, wobbleAmp);
+    huntingOverlay.update(effectiveDelta, wobbleAmp);
   }
 
   renderer.render(scene, camera);
