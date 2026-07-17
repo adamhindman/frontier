@@ -75,7 +75,7 @@ Weather types: `clear`, `overcast`, `rain`, `thunderstorm`, `blizzard`, `fog`.
 
 `ambientTempAt(tx, ty)` in `main.ts` computes °F from biome base temperature, time-of-day sinusoid (±22°F), and elevation modifier. Special biomes (desert, beach, swamp, water) use fixed base temps; all others use a smooth elevation curve.
 
-`stats.warmth` (0–100) drains when ambient temperature is cold, restored by campfires and shelters. Warmth labels: Freezing (0–20), Cold (21–40), Chilled (41–60), Comfy (61–80), Warm (81–100). Falling below 50 warmth deals health damage unless inside a shelter. A campfire provides a strong warmth boost but can be overwhelmed by severe cold/blizzards. A shelter locks warmth recovery at a steady rate regardless of outside conditions.
+`stats.warmth` (0–100) drains when ambient temperature is cold, restored by campfires and shelters. Warmth labels: Freezing (0–20), Cold (21–40), Chilled (41–60), Comfy (61–80), Warm (81–100). Falling below 50 warmth deals health damage unless inside a shelter. A lit campfire or a completed shelter snaps warmth instantly into the Warm range (min 81, capped at 90 for campfire / 82 for shelter) rather than drifting up gradually — you feel warm the moment the fire is going or you step inside.
 
 Lightning strikes are possible during thunderstorms above elevation 0.65, dealing 20–40 damage.
 

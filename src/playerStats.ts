@@ -300,10 +300,11 @@ export function updateStats(
         : 0;
       const drain = gameDays * coldFactor * WARMTH_DRAIN_PER_DAY_MAX * (weatherEffects?.warmthDrainMult ?? 1);
       const gain  = gameDays * WARMTH_RESTORE_PER_DAY_MAX * 10; // campfire provides strong boost
-      stats.warmth = Math.min(90, Math.max(0, stats.warmth - drain + gain));
+      // A lit fire warms you instantly rather than drifting up — snap straight into the Warm range.
+      stats.warmth = Math.min(90, Math.max(81, Math.max(0, stats.warmth - drain + gain)));
     } else if (warming === 'shelter') {
-      // Shelter blocks all outside cold — warmth drifts toward 82 regardless of weather
-      stats.warmth = Math.min(82, stats.warmth + gameDays * WARMTH_RESTORE_PER_DAY_MAX * 4);
+      // Shelter blocks all outside cold and warms you instantly — snap straight into the Warm range.
+      stats.warmth = Math.min(82, Math.max(81, stats.warmth + gameDays * WARMTH_RESTORE_PER_DAY_MAX * 4));
     } else if (ambientTempF < WARMTH_COMFORT_F) {
       const coldFactor = (WARMTH_COMFORT_F - ambientTempF) / WARMTH_COMFORT_F;
       const drainMult  = weatherEffects?.warmthDrainMult ?? 1;
