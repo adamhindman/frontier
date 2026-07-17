@@ -22,18 +22,20 @@ function makeParticles(count: number): Particle[] {
 }
 
 export function createWeatherOverlay(gameCanvas: HTMLCanvasElement) {
+  // z-index above all world DOM overlays (player, animals, structures, traders, etc.
+  // top out around 700) but below the tile inspector (999) and HUD/menus (1000+).
   const fogEl = document.createElement('div');
-  fogEl.style.cssText = 'position:fixed;pointer-events:none;z-index:550;opacity:0;transition:opacity 3s ease;';
+  fogEl.style.cssText = 'position:fixed;pointer-events:none;z-index:950;opacity:0;transition:opacity 3s ease;';
   document.body.appendChild(fogEl);
 
   const particleCanvas = document.createElement('canvas');
-  particleCanvas.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:555;opacity:0;transition:opacity 2s ease;';
+  particleCanvas.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:955;opacity:0;transition:opacity 2s ease;';
   particleCanvas.width  = window.innerWidth;
   particleCanvas.height = window.innerHeight;
   document.body.appendChild(particleCanvas);
 
   const flashEl = document.createElement('div');
-  flashEl.style.cssText = 'position:fixed;background:rgba(255,255,255,0);pointer-events:none;z-index:560;';
+  flashEl.style.cssText = 'position:fixed;background:rgba(255,255,255,0);pointer-events:none;z-index:960;';
   document.body.appendChild(flashEl);
 
   window.addEventListener('resize', () => {
