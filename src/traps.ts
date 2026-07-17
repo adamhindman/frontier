@@ -7,10 +7,18 @@ const CATCH_MAX_PER_HOUR = 0.030;
 const GAME_MIN = 1;
 const GAME_MAX = 9; // forest tops out at 7; use 9 as scale ceiling for headroom
 
+// Denser cover gives deadfalls a slight edge beyond what the biome's raw game value implies.
+const CATCH_RATE_BONUS: Record<string, number> = {
+  forest: 1.15,
+  hills: 1.15,
+  swamp: 1.15,
+};
+
 function catchRateForBiome(biome: string): number {
   const game = (BIOMES as Record<string, { baseResources: { game: number } }>)[biome]?.baseResources.game ?? 1;
   const t = Math.max(0, Math.min(1, (game - GAME_MIN) / (GAME_MAX - GAME_MIN)));
-  return CATCH_MIN_PER_HOUR + t * (CATCH_MAX_PER_HOUR - CATCH_MIN_PER_HOUR);
+  const rate = CATCH_MIN_PER_HOUR + t * (CATCH_MAX_PER_HOUR - CATCH_MIN_PER_HOUR);
+  return rate * (CATCH_RATE_BONUS[biome] ?? 1);
 }
 
 // Animals that can be caught per biome. Empty array = no catch possible.
