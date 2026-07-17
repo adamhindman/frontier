@@ -6,6 +6,7 @@ export interface RivalParty {
   milesTraveled: number;
   ruinsFound: number;
   status: 'active' | 'lost';
+  restDaysRemaining: number;
 }
 
 // Halved testing distances: same thresholds as player quest chain
@@ -13,6 +14,9 @@ export const RIVAL_TOTAL_RUINS = 4;
 const RUIN_MILE_THRESHOLDS = [0, 7.5, 22.5, 67.5];
 const RUIN_DAILY_PROB = 0.20;
 const LOST_DAILY_PROB = 0.002;
+const REST_DAILY_PROB = 0.05; // chance per day to halt for canoe-building/healing
+const REST_DAYS_MIN = 2;
+const REST_DAYS_MAX = 4;
 
 export const PARTY_NAMES = [
   'The Blackwood Expedition',
@@ -57,6 +61,7 @@ export function createRivalParties(worldSeed: string, startTileX: number, startT
     milesTraveled: 0,
     ruinsFound: 0,
     status: 'active' as const,
+    restDaysRemaining: 0,
   }));
 }
 
@@ -76,6 +81,17 @@ export function tickRivalParties(
 
     for (const party of parties) {
       if (party.status === 'lost') continue;
+
+      // Resting parties (building a canoe / healing up) sit still for a few days.
+      if (party.restDaysRemaining > 0) {
+        party.restDaysRemaining--;
+        continue;
+      }
+      if (Math.random() < REST_DAILY_PROB) {
+        party.restDaysRemaining = REST_DAYS_MIN + Math.floor(Math.random() * (REST_DAYS_MAX - REST_DAYS_MIN + 1));
+        messages.push(`resting:${party.name}`);
+        continue;
+      }
 
       // Daily mileage: mostly 5–15 mi/day, occasionally stuck (0) or fast (up to 20)
       const r1 = Math.random(), r2 = Math.random();
@@ -130,5 +146,6 @@ export function getNewsReport(party: RivalParty, currentDay: number): string {
     : party.ruinsFound === RIVAL_TOTAL_RUINS ? `found all ${RIVAL_TOTAL_RUINS} ruins`
     : party.ruinsFound === 1 ? 'found 1 ruin'
     : `found ${party.ruinsFound} ruins`;
-  return `${party.name}: as of day ${reportDay}, ~${party.milesTraveled.toFixed(0)} miles traveled, ${ruinsText}.`;
+  const restText = party.restDaysRemaining > 0 ? ' Currently making camp — building a canoe or tending to the injured.' : '';
+  return `${party.name}: as of day ${reportDay}, ~${party.milesTraveled.toFixed(0)} miles traveled, ${ruinsText}.${restText}`;
 }

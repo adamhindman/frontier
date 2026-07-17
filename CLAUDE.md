@@ -126,7 +126,7 @@ Morale labels: Despair (0–20), Ruined (21–40), Weary (41–60), Resolute (61
 | id | duration | stops at sunset | notes |
 |---|---|---|---|
 | `rest` | finite | no | time-accelerated; food/water drain, energy gain; rate scaled by `energyMultiplier` |
-| `forage` | Infinity | yes | smart gather: fishes if `fishBiome` provided, else hunts/forages; per-hour food+water gain |
+| `forage` | Infinity | no | smart gather: fishes if `fishBiome` provided, else hunts/forages; per-hour food+water gain; works day or night |
 | `harvest_timber` | Infinity | yes | per-hour timber gain (added to inventory, not piles) |
 | `harvest_minerals` | Infinity | yes | per-hour minerals gain |
 | `build_canoe` | 1 day (24h) | yes | per-hour timber deduction from adjacent piles; stops if player leaves tile |
@@ -228,7 +228,8 @@ Stack-based nested radial menu. Open with **Space**; Escape cancels. Number keys
 
 Context-sensitive disabling rules:
 - **Rest**: disabled on water, above treeline
-- **Forage, Harvest**: disabled at night; forage disabled in shelter
+- **Forage**: disabled in shelter; available day or night
+- **Harvest**: disabled at night
 - **Survey**: disabled at night, in shelter
 - **Build**: disabled at night; Canoe/Shelter sub-items disabled if an unfinished structure already exists on the player's tile (auto-resume handles resumption — see Structures)
 

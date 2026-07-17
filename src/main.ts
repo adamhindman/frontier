@@ -247,7 +247,7 @@ const radialMenu = createRadialMenu(
       },
       {
         label: "Forage",
-        disabled: !daylight || inShelter,
+        disabled: inShelter,
         action: () => {
           stats.activeAction = {
             id: "forage",
@@ -347,7 +347,7 @@ const radialMenu = createRadialMenu(
                 stats.activeAction = {
                   id: "build_deadfall",
                   label: "Setting deadfall trap",
-                  durationDays: 0.5 / 24,
+                  durationDays: 20 / 60 / 24,
                   progressDays: 0,
                 };
               },
@@ -1085,6 +1085,15 @@ const questPanel = createQuestPanel(
   quests,
   () => settlements.getAcceptedManEaterQuests(),
   () => stats.trophies.map(t => t.questId),
+  () => {
+    if (!capitalUnlocked) return null;
+    const dx = capitalTileX - startTileX;
+    const dy = capitalTileY - startTileY;
+    const distanceMi = Math.sqrt(dx * dx + dy * dy) * MILES_PER_TILE;
+    const angleDeg = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
+    const bearing = COMPASS_DIRS[Math.round(angleDeg / 22.5) % 16];
+    return { distanceMi, bearing };
+  },
 );
 // Capture the name here — onComplete fires synchronously inside notify, so this
 // is always the name that triggered the quest completion.
@@ -1188,7 +1197,7 @@ if (save) {
     animals.restoreManEater(m);
   if (save.visitedLocations) visitedLocations.push(...save.visitedLocations);
   if (save.raceState?.rivalParties) {
-    rivalParties = save.raceState.rivalParties;
+    rivalParties = save.raceState.rivalParties.map(p => ({ ...p, restDaysRemaining: p.restDaysRemaining ?? 0 }));
     capitalUnlocked = save.raceState.capitalUnlocked ?? false;
   }
 }
@@ -1234,6 +1243,11 @@ if (save?.mapPins === undefined) {
   });
 }
 
+// Direction of the first ruins quest, captured below so the capital can be
+// placed generally along the same heading (see "Capital tile" block) instead
+// of an unrelated random direction that could require backtracking.
+let firstRuinAngleRad = 0;
+
 // Compute the ruins tile — always deterministic per world seed.
 // Sprites are placed every load; pin + quest only on fresh game.
 {
@@ -1267,6 +1281,7 @@ if (save?.mapPins === undefined) {
     if (!WATER_BIOMES.has(rb)) {
       rtx = cx;
       rty = cy;
+      firstRuinAngleRad = angle;
       break;
     }
   }
@@ -1331,8 +1346,11 @@ if (save?.mapPins === undefined) {
   };
   const CAPITAL_MIN_MILES = 215;
   const CAPITAL_MAX_MILES = 285;
+  // Keep the capital within a wide cone of the ruins-chain's initial heading so
+  // the ruins quests generally lead the player toward it instead of away from it.
+  const CAPITAL_CONE_RAD = Math.PI / 3; // ±60°
   const WATER_BIOMES_CAP = new Set(["deep_water", "shallow_water"]);
-  const capAngle = capRng() * Math.PI * 2;
+  const capAngle = firstRuinAngleRad + (capRng() - 0.5) * 2 * CAPITAL_CONE_RAD;
   const capDist = (CAPITAL_MIN_MILES + capRng() * (CAPITAL_MAX_MILES - CAPITAL_MIN_MILES)) / MILES_PER_TILE;
   capitalTileX = Math.round(startTileX + Math.cos(capAngle) * capDist);
   capitalTileY = Math.round(startTileY + Math.sin(capAngle) * capDist);
@@ -1345,7 +1363,7 @@ if (save?.mapPins === undefined) {
       sampleLake(capitalTileX, capitalTileY, river),
     );
     if (!WATER_BIOMES_CAP.has(cb)) break;
-    const a = capRng() * Math.PI * 2;
+    const a = firstRuinAngleRad + (capRng() - 0.5) * 2 * CAPITAL_CONE_RAD;
     capitalTileX = Math.round(startTileX + Math.cos(a) * capDist);
     capitalTileY = Math.round(startTileY + Math.sin(a) * capDist);
   }
@@ -2599,6 +2617,9 @@ function tick() {
       if (msg.startsWith('lost:')) {
         const partyName = msg.slice(5);
         activityLog.addEntry(`${partyName} has not been heard from in many weeks. Feared lost.`);
+      } else if (msg.startsWith('resting:')) {
+        const partyName = msg.slice(8);
+        activityLog.addEntry(`${partyName} is reported to have made camp — building a canoe or tending to the injured.`);
       }
     }
 

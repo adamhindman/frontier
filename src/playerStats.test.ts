@@ -192,14 +192,14 @@ describe('updateStats build action', () => {
 // ─── updateStats — forage action ─────────────────────────────────────────────
 
 describe('updateStats forage action', () => {
-  it('stops at sunset', () => {
+  it('continues after sunset', () => {
     const stats = createStats();
     stats.daysTraveled = 20 / 24; // 8 PM — sunset
     stats.activeAction = { id: 'forage', label: 'Foraging', durationDays: Infinity, progressDays: 0 };
 
     updateStats(stats, 0.016, 0, barrenBiome);
 
-    expect(stats.activeAction).toBeNull();
+    expect(stats.activeAction).not.toBeNull();
   });
 
   it('drains food and water continuously while foraging', () => {

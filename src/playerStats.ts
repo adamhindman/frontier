@@ -398,53 +398,48 @@ export function updateStats(
           stats.activeAction = null;
         }
       } else if (stats.activeAction.id === 'forage') {
-        // Auto-stop at sunset
-        if (!isDaylight(stats.daysTraveled)) {
-          stats.activeAction = null;
-        } else {
-          // Foraging drains food/water but slowly restores energy (lighter work than resting)
-          { const f = stats.food, w = stats.water;
-            stats.food  = Math.max(0, stats.food  - gameDays * FORAGE_FOOD_DRAIN_PER_DAY);
-            stats.water = Math.max(0, stats.water - gameDays * FORAGE_WATER_DRAIN_PER_DAY);
-            stats.foodConsumed  += f - stats.food;
-            stats.waterConsumed += w - stats.water; }
-          stats.energy = Math.min(100, stats.energy + gameDays * FORAGE_ENERGY_GAIN_PER_DAY);
+        // Foraging can continue after dark; drains food/water but slowly restores energy (lighter work than resting)
+        { const f = stats.food, w = stats.water;
+          stats.food  = Math.max(0, stats.food  - gameDays * FORAGE_FOOD_DRAIN_PER_DAY);
+          stats.water = Math.max(0, stats.water - gameDays * FORAGE_WATER_DRAIN_PER_DAY);
+          stats.foodConsumed  += f - stats.food;
+          stats.waterConsumed += w - stats.water; }
+        stats.energy = Math.min(100, stats.energy + gameDays * FORAGE_ENERGY_GAIN_PER_DAY);
 
-          // Roll FORAGE_TICKS_PER_HOUR times per in-game hour
-          const hoursBefore = Math.floor((stats.activeAction.progressDays - gameDays) * 24 * FORAGE_TICKS_PER_HOUR);
-          const hoursNow    = Math.floor(stats.activeAction.progressDays * 24 * FORAGE_TICKS_PER_HOUR);
-          if (hoursNow > hoursBefore) {
-            const waterRatio = stats.water / WATER_CAPACITY_GAL;
-            const foodRatio  = stats.food  / FOOD_CAPACITY_LBS;
-            const needWater  = stats.water < WATER_CAPACITY_GAL;
-            const needFood   = stats.food  < FOOD_CAPACITY_LBS;
+        // Roll FORAGE_TICKS_PER_HOUR times per in-game hour
+        const hoursBefore = Math.floor((stats.activeAction.progressDays - gameDays) * 24 * FORAGE_TICKS_PER_HOUR);
+        const hoursNow    = Math.floor(stats.activeAction.progressDays * 24 * FORAGE_TICKS_PER_HOUR);
+        if (hoursNow > hoursBefore) {
+          const waterRatio = stats.water / WATER_CAPACITY_GAL;
+          const foodRatio  = stats.food  / FOOD_CAPACITY_LBS;
+          const needWater  = stats.water < WATER_CAPACITY_GAL;
+          const needFood   = stats.food  < FOOD_CAPACITY_LBS;
 
-            // Gather the most-needed resource first; gather both if both needed
-            const forageMult = weatherEffects?.forageMult ?? 1;
-            const gatherFood = () => {
-              if (!needFood) return;
-              if (fishBiome) {
-                stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * fishBiome.baseResources.game * FORAGE_FISH_FACTOR * forageMult);
-                forageEvents.push({ emoji: '🐟' });
-              } else if (biome.forageYieldLbsPerHour > 0) {
-                stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * 2 * biome.forageYieldLbsPerHour / FORAGE_TICKS_PER_HOUR * forageMult);
-                forageEvents.push({ emoji: '🌿' });
-              }
-            };
-            const waterBiome = fishBiome ?? biome;
-            const gatherWater = () => {
-              if (!needWater) return;
-              stats.water = Math.min(WATER_CAPACITY_GAL, stats.water + Math.random() * 2 * waterBiome.forageWaterGalPerHour / FORAGE_TICKS_PER_HOUR * forageMult);
-              forageEvents.push({ emoji: '💧' });
-            };
-
-            if (waterRatio < foodRatio) {
-              gatherWater();
-              gatherFood();
-            } else {
-              gatherFood();
-              gatherWater();
+          // Gather the most-needed resource first; gather both if both needed
+          const forageMult = weatherEffects?.forageMult ?? 1;
+          const gatherFood = () => {
+            if (!needFood) return;
+            if (fishBiome) {
+              stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * fishBiome.baseResources.game * FORAGE_FISH_FACTOR * forageMult);
+              forageEvents.push({ emoji: '🐟' });
+            } else if (biome.forageYieldLbsPerHour > 0) {
+              stats.food = Math.min(FOOD_CAPACITY_LBS, stats.food + Math.random() * 2 * biome.forageYieldLbsPerHour / FORAGE_TICKS_PER_HOUR * forageMult);
+              forageEvents.push({ emoji: '🌿' });
             }
+          };
+          const waterBiome = fishBiome ?? biome;
+          const gatherWater = () => {
+            if (!needWater) return;
+            stats.water = Math.min(WATER_CAPACITY_GAL, stats.water + Math.random() * 2 * waterBiome.forageWaterGalPerHour / FORAGE_TICKS_PER_HOUR * forageMult);
+            forageEvents.push({ emoji: '💧' });
+          };
+
+          if (waterRatio < foodRatio) {
+            gatherWater();
+            gatherFood();
+          } else {
+            gatherFood();
+            gatherWater();
           }
         }
       } else if (stats.activeAction.id === 'build_canoe' || stats.activeAction.id === 'build_shelter') {
