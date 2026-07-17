@@ -27,17 +27,34 @@ export function createQuestPanel(
   `;
   document.body.appendChild(panel);
 
+  const titleRow = document.createElement("div");
+  titleRow.style.cssText = `
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 14px;
+    border-bottom: 1px solid #c4a060;
+    padding-bottom: 10px;
+  `;
+
   const titleEl = document.createElement("div");
   titleEl.textContent = "Quest Log";
   titleEl.style.cssText = `
     font: italic bold 15px/1 Georgia, serif;
     color: #7a4a1a;
     letter-spacing: 0.03em;
-    margin-bottom: 14px;
-    border-bottom: 1px solid #c4a060;
-    padding-bottom: 10px;
   `;
-  panel.appendChild(titleEl);
+
+  const toggleLabel = document.createElement("label");
+  toggleLabel.style.cssText = "font-size: 11px; color: #9a7a50; display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none;";
+  const toggleCheck = document.createElement("input");
+  toggleCheck.type = "checkbox";
+  toggleCheck.checked = false;
+  toggleCheck.style.cssText = "cursor: pointer; accent-color: #7a4a1a;";
+  toggleLabel.append(toggleCheck, document.createTextNode("Show completed"));
+
+  titleRow.append(titleEl, toggleLabel);
+  panel.appendChild(titleRow);
 
   const list = document.createElement("div");
   list.style.cssText = "display: flex; flex-direction: column; gap: 14px;";
@@ -56,16 +73,22 @@ export function createQuestPanel(
     const manEaterQuests = getManEaterQuests();
     const trophyQuestIds = new Set(getTrophyQuestIds());
 
-    if (quests.length === 0 && manEaterQuests.length === 0) {
+    const showCompleted = toggleCheck.checked;
+    const visibleQuests = showCompleted ? quests : quests.filter(q => q.status !== "complete");
+    const visibleManEater = showCompleted ? manEaterQuests : manEaterQuests.filter(q => !q.completed);
+
+    if (visibleQuests.length === 0 && visibleManEater.length === 0) {
       const empty = document.createElement("div");
-      empty.textContent = "No quests yet.";
+      empty.textContent = quests.length === 0 && manEaterQuests.length === 0
+        ? "No quests yet."
+        : "No active quests.";
       empty.style.cssText = "color: #9a7a50; font-style: italic;";
       list.appendChild(empty);
       return;
     }
 
     // Ruin / find-and-name quests
-    for (const quest of quests) {
+    for (const quest of visibleQuests) {
       const item = document.createElement("div");
       item.style.cssText = "display: flex; flex-direction: column; gap: 3px;";
 
@@ -98,7 +121,7 @@ export function createQuestPanel(
     }
 
     // Man-eater hunt quests
-    for (const q of manEaterQuests) {
+    for (const q of visibleManEater) {
       const hasTrophy = trophyQuestIds.has(q.id);
       const expireDay = Math.floor(q.acceptedDay!) + MANEATER_QUEST_EXPIRE_DAYS + 1;
       const expired   = q.completed && !hasTrophy;
@@ -180,6 +203,8 @@ export function createQuestPanel(
   function toggle() {
     open ? hide() : show();
   }
+
+  toggleCheck.addEventListener("change", () => { if (open) renderList(); });
 
   // Hovering over the panel itself keeps it open.
   panel.addEventListener("mouseenter", cancelHide);

@@ -60,17 +60,17 @@ const ATTACK_VERBS: Record<string, string> = {
 };
 
 export const MANEATER_REWARD: Record<string, number> = {
-  'Boar':          5,
-  'Eagle':         5,
-  'Bison':         8,
-  'Wolf':          8,
-  'Crocodile':     8,
-  'Bear':         10,
-  'Snow Leopard': 14,
-  'Lion':         14,
-  'Troll':        18,
-  'T-Rex':        18,
-  'Dragon':       22,
+  'Boar':          3,
+  'Eagle':         3,
+  'Bison':         4,
+  'Wolf':          4,
+  'Crocodile':     4,
+  'Bear':          5,
+  'Snow Leopard':  7,
+  'Lion':          7,
+  'Troll':         9,
+  'T-Rex':         9,
+  'Dragon':       11,
 };
 
 // Animals eligible to be man-eaters per biome
@@ -140,9 +140,9 @@ export function generateManEaterQuests(
     }
     usedNames.add(manEaterName);
 
-    // Spawn point 5–20 miles from village center
-    const minTiles = Math.round(5  / MILES_PER_TILE);
-    const maxTiles = Math.round(20 / MILES_PER_TILE);
+    // Spawn point 2–6 miles from village center
+    const minTiles = Math.round(2 / MILES_PER_TILE);
+    const maxTiles = Math.round(6 / MILES_PER_TILE);
     const angle = rng() * Math.PI * 2;
     const dist  = minTiles + rng() * (maxTiles - minTiles);
     const spawnTileX = Math.floor(centerTileX + Math.cos(angle) * dist);

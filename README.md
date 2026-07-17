@@ -55,6 +55,28 @@ You can wade one tile from the shoreline on foot. Open water requires a canoe �
 ### Inventory (`I`)
 Shows current quantities and capacities: food, water, timber, minerals, canoes.
 
+## Ruin artifacts
+
+Unique items found only in ancient ruins. Each ruin yields exactly one.
+
+| Item | Effect |
+|---|---|
+| **Bone Whistle** | Predators won't enter stalking mode unless you come within 3 tiles of them. Man-eaters ignore it. |
+| **Astrolabe** | Survey range increased by 50%. |
+| **Thermal Membrane** | Warmth never drops below Chilled (40), regardless of weather or biome. A paper-thin material with no apparent structure. |
+| **Spoilage Ward** | A clay tablet with inscriptions that halves food spoilage. You don't know how it works. |
+| **Dusk Lantern** | Extends the action window 2 hours past sunset. The light has no visible source and doesn't flicker. |
+| **Muscle Coil** | A spring-loaded brace — energy drains 40% slower during travel. The spring never winds down. |
+| **Ether Scope** | During survey, all animals within range are visible as faint outlines, labeled by type. The glass is unlike any you've seen. |
+| **Resonance Fork** | Foraging for water yields double. A tuning fork that vibrates near underground sources. |
+| **Burden Belt** | Eliminates the carry-weight speed penalty entirely. Made of a material lighter than silk that somehow distributes load. |
+| **Petrified Heart** | Health regenerates even when energy is at zero. Carved from something that pulses faintly in the dark. |
+| **Night Boots** | Travel speed doubled at night. Strange material that seems to grip the dark. |
+| **Seeking Cartridge** | Rifle shots track the nearest animal in the target tile — eliminates wobble and angular jitter entirely. A mechanism you can't explain. |
+| **Portable Bridge** | Cross one tile of deep water on foot without a canoe. Folds to the size of a book. |
+| **Robot Companion** | Automatically forages once per in-game hour while you rest. You have no idea what it runs on. |
+| **Hibernation Charm** | Skip forward to the next season, restoring warmth and partial stats. A small carved token that grows warm in your hand. |
+
 ## TODO
 
 ### Quests

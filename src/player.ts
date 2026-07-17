@@ -15,6 +15,9 @@ export class Player {
 
   private targetX = 24;
   private targetY = 12;
+
+  get stepTargetX() { return this.targetX; }
+  get stepTargetY() { return this.targetY; }
   private progress = 1.0;   // 1.0 = arrived, not mid-step
   private stepDist = 1.0;   // Euclidean tile distance of current step (>1 for diagonals)
 

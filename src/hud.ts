@@ -1,5 +1,5 @@
 import type { PlayerStats } from "./playerStats";
-import { getMoraleLabel, getMoraleEmoji, getWarmthLabel } from "./playerStats";
+import { getMoraleLabel, getMoraleEmoji, getWarmthLabel, MILES_PER_TILE } from "./playerStats";
 import { CANVAS_WIDTH, CANVAS_HEIGHT } from "./constants";
 import musketBasicUrl from "./assets/tiles/musket-basic.png";
 import musketAdvancedUrl from "./assets/tiles/musket-advanced.png";
@@ -252,6 +252,7 @@ export function createHud(
   onUseLiquor?: () => void,
   onUseLodestone?: () => void,
   onSave?: () => void,
+  onRestart?: () => void,
 ): {
   update: (
     stats: PlayerStats,
@@ -266,6 +267,12 @@ export function createHud(
     seasonStr?: string,
   ) => void;
   flash: (msg: string, durationMs?: number) => void;
+  updateVisited: (
+    locations: { name: string; type: string; tileX: number; tileY: number }[],
+    playerTileX: number,
+    playerTileY: number,
+  ) => void;
+  togglePlaces: () => void;
 } {
   // ── Top bar ────────────────────────────────────────────────────────────
   const topBar = document.createElement("div");
@@ -444,7 +451,7 @@ export function createHud(
     });
 
   const saveBtn = document.createElement("button");
-  saveBtn.title = "Save game";
+  saveBtn.title = "Save game (S)";
   saveBtn.textContent = "💾";
   saveBtn.style.cssText = `
     background: none;
@@ -467,7 +474,118 @@ export function createHud(
   });
   if (onSave) saveBtn.addEventListener("click", onSave);
 
-  rightWrap.append(saveBtn, logBtn, questBtn, pauseBtn);
+  // ── Visited locations panel ────────────────────────────────────────────
+  const COMPASS_16 = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+
+  const placesBtn = document.createElement("button");
+  placesBtn.title = "Visited locations (V)";
+  placesBtn.textContent = "🗺️";
+  placesBtn.style.cssText = `
+    background: none;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    color: #666;
+    font: 11px monospace;
+    line-height: 1;
+    padding: 2px 6px;
+    cursor: pointer;
+    pointer-events: auto;
+  `;
+  placesBtn.addEventListener("mouseenter", () => {
+    placesBtn.style.color = "#bbb";
+    placesBtn.style.borderColor = "rgba(255,255,255,0.3)";
+  });
+  placesBtn.addEventListener("mouseleave", () => {
+    placesBtn.style.color = "#666";
+    placesBtn.style.borderColor = "rgba(255,255,255,0.12)";
+  });
+
+  const placesPanel = document.createElement("div");
+  placesPanel.style.cssText = `
+    position: fixed;
+    right: 24px;
+    min-width: 260px;
+    background: rgba(8,8,8,0.97);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 4px;
+    padding: 10px 14px;
+    z-index: 1100;
+    display: none;
+    pointer-events: auto;
+    font: 12px/1.6 monospace;
+    color: #aaa;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  `;
+  document.body.appendChild(placesPanel);
+
+  let placesOpen = false;
+
+  function togglePlaces() {
+    placesOpen = !placesOpen;
+    placesPanel.style.display = placesOpen ? "block" : "none";
+    if (placesOpen) placesPanel.style.top = `${getTopBandHeight() + 6}px`;
+  }
+
+  placesBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    togglePlaces();
+  });
+
+  document.addEventListener("click", (e) => {
+    if (placesOpen && !placesPanel.contains(e.target as Node) && e.target !== placesBtn) {
+      placesOpen = false;
+      placesPanel.style.display = "none";
+    }
+  });
+
+  function updateVisited(
+    locations: { name: string; type: string; tileX: number; tileY: number }[],
+    playerTileX: number,
+    playerTileY: number,
+  ) {
+    placesBtn.textContent = `🗺️${locations.length ? ` (${locations.length})` : ""}`;
+
+    if (!placesOpen) return;
+
+    placesPanel.innerHTML = "";
+
+    if (locations.length === 0) {
+      const msg = document.createElement("div");
+      msg.textContent = "No locations visited yet.";
+      msg.style.color = "#555";
+      placesPanel.appendChild(msg);
+      return;
+    }
+
+    for (const loc of locations) {
+      const dx = loc.tileX - playerTileX;
+      const dy = loc.tileY - playerTileY;
+      const miles = Math.sqrt(dx * dx + dy * dy) * MILES_PER_TILE;
+      const deg = ((Math.atan2(dx, -dy) * 180 / Math.PI) + 360) % 360;
+      const bearing = COMPASS_16[Math.round(deg / 22.5) % 16];
+      const distStr = miles < 0.1 ? "here" : `${miles.toFixed(1)} mi ${bearing}`;
+
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex; justify-content:space-between; gap:16px; padding:3px 0; border-bottom:1px solid rgba(255,255,255,0.06);";
+
+      const nameEl = document.createElement("span");
+      nameEl.textContent = loc.name;
+      nameEl.style.color =
+        loc.type === "village"     ? "#8ab890" :
+        loc.type === "settlement"  ? "#a09050" :
+        loc.type === "ruins"       ? "#9a9a7a" :
+        /* pin */                     "#7ab0c8";
+
+      const distEl = document.createElement("span");
+      distEl.textContent = distStr;
+      distEl.style.cssText = "color:#555; white-space:nowrap;";
+
+      row.append(nameEl, distEl);
+      placesPanel.appendChild(row);
+    }
+  }
+
+  rightWrap.append(placesBtn, saveBtn, logBtn, questBtn, pauseBtn);
 
   if (seed !== undefined) {
     const seedInput = document.createElement("input");
@@ -510,7 +628,7 @@ export function createHud(
     });
 
     const reloadBtn = document.createElement("button");
-    reloadBtn.textContent = "↺";
+    reloadBtn.textContent = "Load";
     reloadBtn.title = "Load seed";
     reloadBtn.style.cssText = `
       background: none;
@@ -533,7 +651,35 @@ export function createHud(
     });
     reloadBtn.addEventListener("click", loadSeed);
 
-    rightWrap.append(seedInput, reloadBtn);
+    const restartBtn = document.createElement("button");
+    restartBtn.textContent = "New";
+    restartBtn.title = "New game (new world)";
+    restartBtn.style.cssText = `
+      background: none;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 4px;
+      color: #666;
+      font: 11px monospace;
+      line-height: 1;
+      padding: 2px 6px;
+      cursor: pointer;
+      pointer-events: auto;
+    `;
+    restartBtn.addEventListener("mouseenter", () => {
+      restartBtn.style.color = "#bbb";
+      restartBtn.style.borderColor = "rgba(255,255,255,0.3)";
+    });
+    restartBtn.addEventListener("mouseleave", () => {
+      restartBtn.style.color = "#666";
+      restartBtn.style.borderColor = "rgba(255,255,255,0.12)";
+    });
+    restartBtn.addEventListener("click", () => {
+      if (confirm("Start a new game in a new world? Your progress will be lost.")) {
+        onRestart?.();
+      }
+    });
+
+    rightWrap.append(seedInput, reloadBtn, restartBtn);
   }
 
   topBar.appendChild(rightWrap);
@@ -657,7 +803,7 @@ export function createHud(
   musketGearImg.style.cssText = "width: 32px; height: 32px; object-fit: contain; image-rendering: pixelated;";
   musketGearImg.src = musketBasicUrl;
   (musketItem.el.children[1] as HTMLElement).replaceChildren(musketGearImg);
-  const canoeItem     = makeItemWidget("DROP",    "🛶", true,  () => { onDropCanoe?.(); equipGroup.close(); }, "Drop canoe here\nto use later");
+  const canoeItem     = makeItemWidget("CANOE",   "🛶", true,  () => { onDropCanoe?.(); equipGroup.close(); }, "Drop canoe here\nto use later");
   equipGroup.popup.append(coatItem.el, wadersItem.el, cramponsItem.el, toolsItem.el, musketItem.el, canoeItem.el);
 
   // Consumables group: liquor, medicine, lodestone
@@ -799,5 +945,5 @@ export function createHud(
     consumGroup.bottomEl.textContent = consumCount > 0 ? String(consumCount) : "";
   }
 
-  return { update: updateHud, flash };
+  return { update: updateHud, flash, updateVisited, togglePlaces };
 }

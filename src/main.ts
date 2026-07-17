@@ -31,7 +31,7 @@ import {
 } from "./structures";
 import { TimberPileManager } from "./timberPiles";
 import { TrapManager } from "./traps";
-import { saveGame, loadGame, deleteSave, saveManualGame, loadManualGame, hasManualSave } from "./save";
+import { saveGame, loadGame, deleteSave, saveManualGame, loadManualGame, hasManualSave, promoteManualToAuto, cleanLegacySaves } from "./save";
 import { createRadialMenu } from "./radialMenu";
 import {
   sampleElevation,
@@ -68,6 +68,11 @@ import { HuntingOverlay } from "./hunting";
 import { SettlementManager } from "./settlements";
 import { TraderManager } from "./traders";
 import { MANEATER_QUEST_EXPIRE_DAYS } from "./manEaterQuests";
+import { createDebugPanel } from "./debugPanel";
+import { PLAYER_SPEED } from "./constants";
+import { computeAmbientTemp, canWadeShallowWater, createWorldQueries } from "./worldQueries";
+import { createRivalParties, tickRivalParties, getNewsReport, RIVAL_TOTAL_RUINS } from "./rivalParties";
+import type { RivalParty } from "./rivalParties";
 
 // --- Scene ---
 const scene = new THREE.Scene();
@@ -117,11 +122,13 @@ function resolveSeed(): string {
   return resolved;
 }
 const currentSeed = resolveSeed();
+cleanLegacySaves();
 let weatherSeed = Math.floor(Math.random() * 0x100000000);
 
 // --- World ---
 const { elevation, moisture, river } = createNoiseGenerators(currentSeed);
 const chunkManager = new ChunkManager(scene, elevation, moisture, river);
+const { getBiomeAt, isWaterBiome, adjacentWaterBiome } = createWorldQueries(elevation, moisture, river);
 
 // --- Player & input ---
 const player = new Player(scene);
@@ -251,64 +258,6 @@ const radialMenu = createRadialMenu(
         },
       },
       {
-        label: "Harvest Timber",
-        disabled: !daylight || aboveTreeline || inShelter || onWater,
-        action: () => {
-          stats.activeAction = {
-            id: "harvest_timber",
-            label: "Harvesting timber",
-            durationDays: Infinity,
-            progressDays: 0,
-          };
-        },
-      },
-      {
-        label: "Survey",
-        disabled: !daylight || inShelter,
-        action: () => enterSurvey(),
-      },
-      {
-        label: "Drop Canoe",
-        disabled: stats.canoes === 0 || onWater,
-        action: () => {
-          stats.canoes--;
-          droppedCanoes.drop(
-            Math.floor(player.tileX) + 1,
-            Math.floor(player.tileY),
-          );
-        },
-      },
-      {
-        label: "Campfire",
-        disabled: onWater || aboveTreeline || inShelter,
-        action: () => placeCampfire(ptx, pty, 2),
-      },
-      {
-        label: "Use Item",
-        disabled: stats.medicine === 0 && stats.liquor === 0,
-        children: [
-          {
-            label: `Medicine 💊${stats.medicine > 1 ? ` ×${stats.medicine}` : ''}`,
-            disabled: stats.medicine === 0,
-            action: () => {
-              stats.medicine--;
-              stats.health = 100;
-              showHudMessage("Medicine taken — health restored");
-            },
-          },
-          {
-            label: `Liquor 🍶${stats.liquor > 1 ? ` ×${stats.liquor}` : ''}`,
-            disabled: stats.liquor === 0,
-            action: () => {
-              stats.liquor--;
-              stats.morale = Math.min(100, stats.morale + 60);
-              stats.warmth = Math.min(100, stats.warmth + 35);
-              showHudMessage("Liquor consumed — morale & warmth restored");
-            },
-          },
-        ],
-      },
-      {
         label: "Build",
         children: (() => {
           const tileX = Math.floor(player.tileX);
@@ -398,7 +347,7 @@ const radialMenu = createRadialMenu(
                 stats.activeAction = {
                   id: "build_deadfall",
                   label: "Setting deadfall trap",
-                  durationDays: 1 / 24,
+                  durationDays: 0.5 / 24,
                   progressDays: 0,
                 };
               },
@@ -406,12 +355,100 @@ const radialMenu = createRadialMenu(
           ];
         })(),
       },
+      {
+        label: "Survey",
+        disabled: !daylight || inShelter,
+        action: () => enterSurvey(),
+      },
+      {
+        label: "Treat Wound",
+        disabled: !stats.bleeding,
+        action: () => {
+          stats.activeAction = {
+            id: "treat_wound",
+            label: "Treating wound",
+            durationDays: 1 / 24,
+            progressDays: 0,
+          };
+        },
+      },
+      {
+        label: "Track",
+        disabled: !daylight || onWater || !settlements.getAcceptedManEaterQuests().some(q => !q.completed),
+        action: () => {
+          stats.activeAction = {
+            id: "track_maneater",
+            label: "Tracking",
+            durationDays: 1 / 24,
+            progressDays: 0,
+          };
+        },
+      },
+      {
+        label: "Campfire",
+        disabled: onWater || aboveTreeline || inShelter,
+        action: () => placeCampfire(ptx, pty, 2),
+      },
+      {
+        label: "Harvest Timber",
+        disabled: !daylight || aboveTreeline || inShelter || onWater,
+        action: () => {
+          stats.activeAction = {
+            id: "harvest_timber",
+            label: "Harvesting timber",
+            durationDays: Infinity,
+            progressDays: 0,
+          };
+        },
+      },
+      {
+        label: "Drop Canoe",
+        disabled: stats.canoes === 0 || onWater,
+        action: () => {
+          stats.canoes--;
+          droppedCanoes.drop(
+            Math.floor(player.tileX) + 1,
+            Math.floor(player.tileY),
+          );
+        },
+      },
+      {
+        label: "Use Item",
+        disabled: stats.medicine === 0 && stats.liquor === 0,
+        children: [
+          {
+            label: `Medicine 💊${stats.medicine > 1 ? ` ×${stats.medicine}` : ''}`,
+            disabled: stats.medicine === 0,
+            action: () => {
+              stats.medicine--;
+              stats.health = 100;
+              stats.bleeding = false;
+              showHudMessage("Medicine taken — health restored");
+            },
+          },
+          {
+            label: `Liquor 🍶${stats.liquor > 1 ? ` ×${stats.liquor}` : ''}`,
+            disabled: stats.liquor === 0,
+            action: () => {
+              stats.liquor--;
+              stats.morale = Math.min(100, stats.morale + 60);
+              stats.warmth = Math.min(100, stats.warmth + 35);
+              showHudMessage("Liquor consumed — morale & warmth restored");
+            },
+          },
+        ],
+      },
     ];
   },
   () => stats.activeAction?.id === "survey",
   () => input.reset(),
 );
 window.addEventListener("keydown", (e) => {
+  if (e.metaKey && e.key === '\\') {
+    e.preventDefault();
+    debugPanel.toggle();
+    return;
+  }
   if (manualPaused || blurPaused) {
     // Only P can resume — block everything else so no accidental key unpauses or moves the player.
     if (e.key === "p" || e.key === "P")
@@ -442,6 +479,15 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     activityLog.toggle();
   }
+  if (e.key === "s" || e.key === "S") {
+    e.preventDefault();
+    doSave();
+    showHudMessage("Game saved.");
+  }
+  if (e.key === "v" || e.key === "V") {
+    e.preventDefault();
+    hud.togglePlaces();
+  }
   if (e.key === "d" || e.key === "D") {
     const onWaterNow = isWaterBiome(
       Math.floor(player.tileX),
@@ -458,6 +504,16 @@ window.addEventListener("keydown", (e) => {
       };
       droppedCanoes.drop(tile.tileX, tile.tileY);
     }
+  }
+  // Arrow keys or Escape cancel auto-walk.
+  if (autoWalkMode && !e.repeat && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Escape'].includes(e.key)) {
+    autoWalkMode = false;
+    autoWalkDx = 0;
+    autoWalkDy = 0;
+    hud.flash("Auto-walk off");
+  }
+  if (e.key === "Meta" && !e.repeat) {
+    cmdDownTime = performance.now();
   }
   if (e.key === "Shift" && !e.repeat) {
     huntingMode = true;
@@ -484,6 +540,14 @@ window.addEventListener("keyup", (e) => {
     animals.setHuntingMode(false);
     huntingVignette.style.opacity = '0';
   }
+  if (e.key === "Meta" && cmdDownTime > 0) {
+    if (performance.now() - cmdDownTime >= CMD_LONGPRESS_MS) {
+      autoWalkMode = !autoWalkMode;
+      if (!autoWalkMode) { autoWalkDx = 0; autoWalkDy = 0; }
+      hud.flash(autoWalkMode ? "Auto-walk on" : "Auto-walk off");
+    }
+    cmdDownTime = 0;
+  }
 });
 
 // Hunting click: fire rifle toward the clicked tile direction.
@@ -497,20 +561,20 @@ renderer.domElement.addEventListener("click", (e) => {
   const tile = huntingOverlay.getClickTile(e, camera);
   if (!tile) return;
 
-  // Direction from player center to clicked tile center, with random spread (±6°).
+  // Direction from player visual center to clicked tile center, with random spread (±1°).
   const cx = tile.tileX + 0.5, cy = tile.tileY + 0.5;
-  const dx = cx - player.tileX, dy = cy - player.tileY;
+  const dx = cx - player.visualX, dy = cy - player.visualY;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
   const baseNdx = dx / len, baseNdy = dy / len;
   const precision = stats.precisionRifle > 0;
-  const jitterDeg = precision ? 0.25 : 1;
+  const jitterDeg = precision ? 0.25 : 2;
   const jitter = (Math.random() * 2 - 1) * (jitterDeg * Math.PI / 180);
   const cosJ = Math.cos(jitter), sinJ = Math.sin(jitter);
   const ndx = baseNdx * cosJ - baseNdy * sinJ;
   const ndy = baseNdx * sinJ + baseNdy * cosJ;
 
   const rifleRange = RIFLE_RANGE + (precision ? 2 : 0);
-  const result = animals.fireRay(player.tileX, player.tileY, ndx, ndy, rifleRange);
+  const result = animals.fireRay(player.visualX, player.visualY, ndx, ndy, rifleRange);
   animals.scareAll(player.tileX, player.tileY);
   stats.rifleAmmo--;
 
@@ -655,6 +719,32 @@ function updateDailyRecap(daysTraveled: number) {
   }
 }
 
+// --- Random ruin name generator ---
+// Names draw from Quechua and Sanskrit phonetics to evoke a lost ancient civilization.
+const RUIN_ROOTS_A = [
+  'Pacha', 'Huayna', 'Inti', 'Qori', 'Saxa', 'Rumi', 'Puma', 'Cusi',
+  'Wira', 'Yana', 'Tupa', 'Vica', 'Urco', 'Paucar', 'Tampu', 'Caxas',
+  'Maha', 'Vara', 'Naga', 'Soma', 'Deva', 'Mani', 'Surya', 'Hema',
+  'Jaya', 'Chandra', 'Kavi', 'Indra', 'Patta', 'Dhara',
+];
+const RUIN_ROOTS_B = [
+  'camac', 'marca', 'tambo', 'cocha', 'pampa', 'cancha', 'bamba',
+  'huasi', 'picchu', 'pura', 'vati', 'giri', 'nagar', 'kota',
+  'pur', 'puram', 'garh', 'nath', 'wadi', 'yoc',
+];
+function randomRuinName(): string {
+  const pick = <T>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
+  const cap  = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const a = pick(RUIN_ROOTS_A);
+  const b = pick(RUIN_ROOTS_B);
+  const r = Math.random();
+  if (r < 0.55) return `${a}${b}`;          // compound: "Pachacamac"
+  if (r < 0.85) return `${a} ${cap(b)}`;    // two words: "Huayna Tambo"
+  // three parts: two A-roots fused + B-suffix
+  const a2 = pick(RUIN_ROOTS_A);
+  return `${a}${a2.toLowerCase()} ${cap(b)}`;
+}
+
 // --- Stats & HUD ---
 const COMPASS_DIRS = [
   "N",
@@ -674,6 +764,12 @@ const COMPASS_DIRS = [
   "NW",
   "NNW",
 ] as const;
+
+// --- Race state ---
+let rivalParties: RivalParty[] = [];
+let capitalTileX = 0;
+let capitalTileY = 0;
+let capitalUnlocked = false;
 
 const stats = createStats();
 const activityLog = createActivityLog();
@@ -704,6 +800,7 @@ const hud = createHud(
     if (stats.medicine <= 0) return;
     stats.medicine--;
     stats.health = 100;
+    stats.bleeding = false;
     hud.flash("Medicine taken — health restored");
   },
   () => {
@@ -715,6 +812,14 @@ const hud = createHud(
   },
   () => {
     if (stats.lodestone <= 0) return;
+    if (capitalUnlocked) {
+      const dx = capitalTileX - player.tileX, dy = capitalTileY - player.tileY;
+      const deg = ((Math.atan2(dx, -dy) * 180 / Math.PI) + 360) % 360;
+      const bearing = COMPASS_DIRS[Math.round(deg / 22.5) % 16];
+      const distMi = (Math.sqrt(dx * dx + dy * dy) * MILES_PER_TILE).toFixed(0);
+      hud.flash(`Lodestone: capital to the ${bearing} (~${distMi} mi)`);
+      return;
+    }
     // Nameless ruin pins are placed by the quest system with id "ruins_N" and
     // name "Nameless ruins". They exist at the target tile even before the player
     // has visited the area, unlike ruin footprint sprites which are scattered on arrival.
@@ -732,11 +837,18 @@ const hud = createHud(
     }
     const dx = bestTileX - player.tileX, dy = bestTileY - player.tileY;
     const deg = ((Math.atan2(dx, -dy) * 180 / Math.PI) + 360) % 360;
-    const dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
-    const bearing = dirs[Math.round(deg / 22.5) % 16];
+    const bearing = COMPASS_DIRS[Math.round(deg / 22.5) % 16];
     hud.flash(`Lodestone: ruins to the ${bearing}`);
   },
   () => doManualSave(),
+  () => {
+    gameOver = true; // prevent beforeunload from re-saving
+    deleteSave();
+    const newSeed = Math.random().toString(36).slice(2, 10);
+    const url = new URL(window.location.href);
+    url.searchParams.set('seed', newSeed);
+    window.location.href = url.toString();
+  },
 );
 const updateHud = hud.update;
 const showHudMessage = hud.flash;
@@ -781,6 +893,153 @@ const mapPins = new MapPinManager(renderer.domElement, camera);
 const ruinSprites = new RuinSpriteManager(renderer.domElement, camera);
 const settlements = new SettlementManager(renderer.domElement, camera, elevation, moisture, river, currentSeed, mapPins);
 const traders = new TraderManager(renderer.domElement, camera, elevation, moisture, river);
+
+function buildCapitalClue(
+  ruinIndex: number,
+  fromX: number,
+  fromY: number,
+  hasLodestone: boolean,
+  nextRuinsX?: number,
+  nextRuinsY?: number,
+): string[] {
+  const dx = capitalTileX - fromX, dy = capitalTileY - fromY;
+  const deg = ((Math.atan2(dx, -dy) * 180 / Math.PI) + 360) % 360;
+  const bearingIdx = Math.round(deg / 22.5) % 16;
+  const bearing = COMPASS_DIRS[bearingIdx];
+
+  let capitalHint: string;
+  if (ruinIndex === 0) {
+    const lo = COMPASS_DIRS[(bearingIdx + 14) % 16];
+    const hi = COMPASS_DIRS[(bearingIdx + 2) % 16];
+    capitalHint = `The inscriptions suggest the capital lies somewhere between ${lo} and ${hi}.`;
+  } else if (ruinIndex === 1) {
+    capitalHint = `The artifacts point clearly to the ${bearing}.`;
+  } else if (ruinIndex === 2) {
+    const distMi = Math.sqrt(dx * dx + dy * dy) * MILES_PER_TILE;
+    capitalHint = `The capital lies approximately ${distMi.toFixed(0)} miles to the ${bearing}.`;
+  } else {
+    capitalHint = hasLodestone
+      ? `Your lodestone now points toward the ancient capital. Tap it to check your bearing.`
+      : `Among the rubble you find a Lodestone Amulet. It now guides you to the capital — tap it to check your bearing.`;
+  }
+
+  const ordinals = ['first', 'second', 'third', 'fourth'];
+  const ordinal = ordinals[ruinIndex] ?? `${ruinIndex + 1}th`;
+  const isFinal = ruinIndex === RIVAL_TOTAL_RUINS - 1;
+  const paragraphs: string[] = [
+    isFinal
+      ? `You've found the fourth and final clue about the location of the ancient capital.`
+      : `You've found the ${ordinal} of four clues about the location of the ancient capital.`,
+  ];
+
+  if (nextRuinsX !== undefined && nextRuinsY !== undefined) {
+    const ndx = nextRuinsX - startTileX, ndy = nextRuinsY - startTileY;
+    const ndeg = ((Math.atan2(ndx, -ndy) * 180 / Math.PI) + 360) % 360;
+    const nBearing = COMPASS_DIRS[Math.round(ndeg / 22.5) % 16];
+    const nDist = (Math.sqrt(ndx * ndx + ndy * ndy) * MILES_PER_TILE).toFixed(1);
+    paragraphs.push(`Another clue can be found at nameless ruins ${nDist} mi to the ${nBearing} of your starting location.`);
+  } else {
+    paragraphs.push(capitalHint);
+  }
+
+  return paragraphs;
+}
+
+function showCluePopup(paragraphs: string[], onDismiss?: () => void): void {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = `
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.72);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 2001; font-family: monospace;
+  `;
+  const box = document.createElement('div');
+  box.style.cssText = `
+    background: rgba(18,14,8,0.98);
+    border: 1px solid rgba(200,168,80,0.3);
+    border-radius: 10px; padding: 36px 48px;
+    max-width: 480px; width: 100%;
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+  `;
+  const icon = document.createElement('div');
+  icon.textContent = '📜';
+  icon.style.cssText = 'font-size: 28px;';
+  box.appendChild(icon);
+  for (const para of paragraphs) {
+    const p = document.createElement('div');
+    p.textContent = para;
+    p.style.cssText = 'color: #d8c890; font-size: 13px; line-height: 1.7; text-align: center;';
+    box.appendChild(p);
+  }
+  const btn = document.createElement('button');
+  btn.textContent = 'Continue';
+  btn.style.cssText = `
+    background: rgba(40,40,40,0.9); border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 6px; color: #d0d0d0; font: 13px monospace;
+    padding: 10px 28px; cursor: pointer; margin-top: 8px;
+  `;
+  const dismiss = () => { overlay.remove(); onDismiss?.(); };
+  btn.addEventListener('click', dismiss);
+  btn.addEventListener('mouseenter', () => { btn.style.background = 'rgba(70,70,70,0.95)'; btn.style.color = '#fff'; });
+  btn.addEventListener('mouseleave', () => { btn.style.background = 'rgba(40,40,40,0.9)'; btn.style.color = '#d0d0d0'; });
+  box.appendChild(btn);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) dismiss(); });
+}
+
+function showRaceIntro(parties: RivalParty[]): void {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = `
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.88);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 3000; font-family: monospace;
+  `;
+  const box = document.createElement('div');
+  box.style.cssText = `
+    background: rgba(14,10,4,0.98);
+    border: 1px solid rgba(200,168,80,0.35);
+    border-radius: 10px; padding: 40px 52px;
+    max-width: 520px; width: 100%;
+    display: flex; flex-direction: column; gap: 18px;
+  `;
+  const title = document.createElement('div');
+  title.textContent = '⚑  The Race Begins';
+  title.style.cssText = 'font-size: 20px; color: #c8a84a; letter-spacing: 0.06em; text-align: center;';
+  const p1 = document.createElement('div');
+  p1.textContent = 'The ancient ruins scattered across this continent are remnants of a civilization lost to time. Legend holds that their great capital still stands — a discovery that would make your name eternal.';
+  p1.style.cssText = 'color: #c0b090; font-size: 13px; line-height: 1.8;';
+  const p2 = document.createElement('div');
+  p2.textContent = `Name ${RIVAL_TOTAL_RUINS} ruins to uncover the capital's location — and reach it before your rivals.`;
+  p2.style.cssText = 'color: #c0b090; font-size: 13px; line-height: 1.8;';
+  const rivalsDiv = document.createElement('div');
+  rivalsDiv.style.cssText = 'display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-top: 1px solid rgba(255,255,255,0.08); border-bottom: 1px solid rgba(255,255,255,0.08);';
+  const rivalsLabel = document.createElement('div');
+  rivalsLabel.textContent = 'Your rivals:';
+  rivalsLabel.style.cssText = 'color: #666; font-size: 11px; margin-bottom: 4px;';
+  rivalsDiv.appendChild(rivalsLabel);
+  for (const p of parties) {
+    const row = document.createElement('div');
+    row.textContent = `⚐  ${p.name}`;
+    row.style.cssText = 'color: #a09070; font-size: 12px;';
+    rivalsDiv.appendChild(row);
+  }
+  const btn = document.createElement('button');
+  btn.textContent = 'Begin Expedition';
+  btn.style.cssText = `
+    background: rgba(40,40,40,0.9); border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 6px; color: #d0d0d0; font: 13px monospace;
+    padding: 12px 32px; cursor: pointer; align-self: center;
+  `;
+  btn.addEventListener('click', () => overlay.remove());
+  btn.addEventListener('mouseenter', () => { btn.style.background = 'rgba(70,70,70,0.95)'; btn.style.color = '#fff'; });
+  btn.addEventListener('mouseleave', () => { btn.style.background = 'rgba(40,40,40,0.9)'; btn.style.color = '#d0d0d0'; });
+  box.append(title, p1, p2, rivalsDiv, btn);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
 const quests = new QuestManager({
   onComplete: (q) => {
     if (q.type !== 'find_and_name') return;
@@ -792,12 +1051,34 @@ const quests = new QuestManager({
     const ddx = curX - prevRuinsTileX, ddy = curY - prevRuinsTileY;
     const forwardBearing = ((Math.atan2(ddx, -ddy) * 180 / Math.PI) + 360) % 360;
 
-    // Place the next quest immediately — don't gate it on the screen being dismissed.
     prevRuinsTileX = curX;
     prevRuinsTileY = curY;
-    placeRuinsQuest(curX, curY, forwardBearing, ruinsQuestCount++);
 
-    showQuestComplete(q, pendingCityName || completedPin?.name || 'the ruins', () => {});
+    const m = q.id.match(/^quest_ruins_(\d+)$/);
+    const completedIndex = m ? parseInt(m[1]) : -1;
+
+    let nextRuinsX: number | undefined;
+    let nextRuinsY: number | undefined;
+
+    if (completedIndex >= 0 && completedIndex < RIVAL_TOTAL_RUINS - 1) {
+      // Place the next ruins quest immediately — not gated on screen dismissal.
+      placeRuinsQuest(curX, curY, forwardBearing, ruinsQuestCount++);
+      nextRuinsX = lastRuinsTileX;
+      nextRuinsY = lastRuinsTileY;
+    } else if (completedIndex === RIVAL_TOTAL_RUINS - 1) {
+      // Final ruin — activate capital navigation.
+      capitalUnlocked = true;
+      if (stats.lodestone <= 0) stats.lodestone = 1;
+      ruinsQuestCount++;
+    }
+
+    const clue = completedIndex >= 0
+      ? buildCapitalClue(completedIndex, curX, curY, stats.lodestone > 0, nextRuinsX, nextRuinsY)
+      : null;
+
+    showQuestComplete(q, pendingCityName || completedPin?.name || 'the ruins', () => {
+      if (clue) showCluePopup(clue);
+    });
   },
 });
 const questPanel = createQuestPanel(
@@ -811,11 +1092,24 @@ let pendingCityName = '';
 mapPins.onRename = (pinId, newName) => {
   pendingCityName = newName;
   quests.notify("pin_renamed", { pinId, newName });
+  // Keep visitedLocations in sync: update an existing entry's name, or add
+  // a new entry for any user-placed pin (non-fixed).
+  const pin = mapPins.findById(pinId);
+  if (pin) {
+    const existing = visitedLocations.find(v => v.tileX === pin.tileX && v.tileY === pin.tileY);
+    if (existing) {
+      existing.name = newName;
+    } else if (!pin.fixed) {
+      const type = pinId.startsWith('ruins_') ? 'ruins' : 'pin';
+      visitedLocations.push({ name: newName, type, tileX: pin.tileX, tileY: pin.tileY });
+    }
+  }
 };
 
 // --- Persistence ---
 let startTileX = Math.floor(player.tileX);
 let startTileY = Math.floor(player.tileY);
+const visitedLocations: { name: string; type: string; tileX: number; tileY: number }[] = [];
 
 function doManualSave() {
   if (gameOver) return;
@@ -835,6 +1129,8 @@ function doManualSave() {
     traps.getSaveData(),
     settlements.getManEaterQuestSaveData(),
     animals.getManEaterSaveData(),
+    visitedLocations,
+    { rivalParties, capitalUnlocked },
   );
   localStorage.setItem("lastSeed", currentSeed);
   showHudMessage("Game saved.");
@@ -858,11 +1154,14 @@ function doSave() {
     traps.getSaveData(),
     settlements.getManEaterQuestSaveData(),
     animals.getManEaterSaveData(),
+    visitedLocations,
+    { rivalParties, capitalUnlocked },
   );
   localStorage.setItem("lastSeed", currentSeed);
 }
 
-const save = loadGame(currentSeed);
+const saveRaw = loadGame();
+const save = saveRaw?.seed === currentSeed ? saveRaw : null;
 if (save) {
   Object.assign(stats, save.stats);
   player.teleport(save.playerTileX, save.playerTileY);
@@ -874,13 +1173,24 @@ if (save) {
     droppedCanoes.drop(c.tileX, c.tileY);
   for (const p of save.timberPiles ?? [])
     timberPiles.restorePile(p.tileX, p.tileY, p.amount);
-  if (save.mapPins !== undefined) mapPins.restore(save.mapPins);
+  if (save.mapPins !== undefined) {
+    mapPins.restore(save.mapPins.map(p =>
+      p.id.startsWith('ruins_') && p.name === 'Nameless ruins'
+        ? { ...p, suggestName: randomRuinName }
+        : p
+    ));
+  }
   if (save.quests !== undefined) quests.restore(save.quests);
   for (const t of save.traps ?? [])
     traps.restoreTrap(t.tileX, t.tileY, t.biome, t.ageHours ?? 0);
   if (save.manEaterQuests) settlements.restoreManEaterQuests(save.manEaterQuests);
   for (const m of save.activeManEaters ?? [])
     animals.restoreManEater(m);
+  if (save.visitedLocations) visitedLocations.push(...save.visitedLocations);
+  if (save.raceState?.rivalParties) {
+    rivalParties = save.raceState.rivalParties;
+    capitalUnlocked = save.raceState.capitalUnlocked ?? false;
+  }
 }
 
 // On a fresh game, scan for a large lake shore to start near.
@@ -896,6 +1206,7 @@ if (!save) {
 if (save?.weatherSeed !== undefined) weatherSeed = save.weatherSeed;
 const weatherSystem = createWeatherSystem(weatherSeed);
 const weatherOverlay = createWeatherOverlay(renderer.domElement);
+const debugPanel = createDebugPanel();
 
 // If this is a fresh game (or an old save without map-pin data), seed the starting location pin.
 if (save?.mapPins === undefined) {
@@ -913,6 +1224,7 @@ if (save?.mapPins === undefined) {
     tileY: sy,
     name: "Starting Location",
     color: "#000",
+    fixed: true,
     dayPlaced: stats.daysTraveled,
     elevationFt: elevFt,
     biome: sbiome,
@@ -935,8 +1247,8 @@ if (save?.mapPins === undefined) {
     return (ruinsSeed >>> 0) / 0x100000000;
   };
 
-  const RUINS_MIN_MILES = 15 * 0.85;
-  const RUINS_MAX_MILES = 15 * 1.15;
+  const RUINS_MIN_MILES = 7.5 * 0.85;
+  const RUINS_MAX_MILES = 7.5 * 1.15;
   const WATER_BIOMES = new Set(["deep_water", "shallow_water"]);
   let rtx = startTileX,
     rty = startTileY;
@@ -992,6 +1304,7 @@ if (save?.mapPins === undefined) {
       distanceMiles: rMiles,
       bearing: rBearing,
       notes: "",
+      suggestName: randomRuinName,
     });
     quests.add({
       id: "quest_ruins_0",
@@ -1001,6 +1314,40 @@ if (save?.mapPins === undefined) {
       status: "active",
       data: { pinId: ruinsPinId },
     });
+  }
+}
+
+// --- Capital tile ---
+// Seeded from world seed, ~250 miles from start (testing distance). Always deterministic.
+{
+  let capSeed = 0;
+  for (let i = 0; i < currentSeed.length; i++)
+    capSeed = (capSeed * 31 + currentSeed.charCodeAt(i) + 17) >>> 0;
+  const capRng = () => {
+    capSeed ^= capSeed << 13;
+    capSeed ^= capSeed >>> 17;
+    capSeed ^= capSeed << 5;
+    return (capSeed >>> 0) / 0x100000000;
+  };
+  const CAPITAL_MIN_MILES = 215;
+  const CAPITAL_MAX_MILES = 285;
+  const WATER_BIOMES_CAP = new Set(["deep_water", "shallow_water"]);
+  const capAngle = capRng() * Math.PI * 2;
+  const capDist = (CAPITAL_MIN_MILES + capRng() * (CAPITAL_MAX_MILES - CAPITAL_MIN_MILES)) / MILES_PER_TILE;
+  capitalTileX = Math.round(startTileX + Math.cos(capAngle) * capDist);
+  capitalTileY = Math.round(startTileY + Math.sin(capAngle) * capDist);
+  // Nudge off water if needed
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const cb = getBiome(
+      sampleElevation(capitalTileX, capitalTileY, elevation),
+      sampleMoisture(capitalTileX, capitalTileY, moisture),
+      sampleRiver(capitalTileX, capitalTileY, river),
+      sampleLake(capitalTileX, capitalTileY, river),
+    );
+    if (!WATER_BIOMES_CAP.has(cb)) break;
+    const a = capRng() * Math.PI * 2;
+    capitalTileX = Math.round(startTileX + Math.cos(a) * capDist);
+    capitalTileY = Math.round(startTileY + Math.sin(a) * capDist);
   }
 }
 
@@ -1025,8 +1372,8 @@ let ruinsQuestCount = quests.getAll().reduce((max, q) => {
 }
 
 function placeRuinsQuest(fromTileX: number, fromTileY: number, forwardBearingDeg: number, questIndex: number) {
-  // Distance grows with each quest: ~20, ~44, ~97, ~213, ~469 miles…
-  const targetMiles  = 15 * Math.pow(3, questIndex - 1);
+  // Distance grows with each quest (testing distances, halved): ~7.5, ~22.5, ~67.5, ~202.5 miles…
+  const targetMiles  = 7.5 * Math.pow(3, questIndex - 1);
   const RUINS_MIN_MILES = targetMiles * 0.85;
   const RUINS_MAX_MILES = targetMiles * 1.15;
   const CONE_HALF_DEG   = 30;
@@ -1064,6 +1411,7 @@ function placeRuinsQuest(fromTileX: number, fromTileY: number, forwardBearingDeg
     id: pinId, tileX: rtx, tileY: rty, name: 'Nameless ruins', color: '#000',
     dayPlaced: stats.daysTraveled, elevationFt: reElevFt, biome: rb,
     distanceMiles: rMiles, bearing: rBearing, notes: '',
+    suggestName: randomRuinName,
   });
   quests.add({
     id: `quest_ruins_${questIndex}`,
@@ -1085,6 +1433,23 @@ waterAtLastMidnight       = stats.waterConsumed;
 foodSpoiledAtLastMidnight = stats.foodSpoiled;
 lastKnownDay = Math.floor(stats.daysTraveled);
 
+// --- Rival parties init ---
+if (rivalParties.length === 0) {
+  rivalParties = createRivalParties(currentSeed, startTileX, startTileY);
+}
+// Also derive capitalUnlocked from quest state in case it wasn't saved
+if (!capitalUnlocked) {
+  capitalUnlocked = quests.getAll().some(q => q.id === `quest_ruins_${RIVAL_TOTAL_RUINS - 1}` && q.status === 'complete');
+}
+
+// Wire news provider to trader menu (applies to both trader and village menus)
+traders.setNewsProvider(() => rivalParties.map(p => getNewsReport(p, stats.daysTraveled)));
+
+// Intro splash on fresh game
+if (!save) {
+  showRaceIntro(rivalParties);
+}
+
 // --- Ambient temperature ---
 // °F at a tile, accounting for biome base temp, elevation, and time of day.
 // Coldest at midnight, warmest at noon; higher elevation = colder.
@@ -1094,21 +1459,7 @@ function ambientTempAt(tx: number, ty: number): number {
   const riverVal = sampleRiver(tx, ty, river);
   const lakeVal = sampleLake(tx, ty, river);
   const biome = getBiome(elev, moist, riverVal, lakeVal);
-  const dayFrac = stats.daysTraveled % 1;
-  const timeMod = -Math.cos(dayFrac * Math.PI * 2) * 22; // -22 at midnight, +22 at noon
-  const elevMod = -(elev - 0.5) * 45; // -22.5 at peaks, +9 in valleys
-
-  // Special biomes keep their own base temp; everything else uses a smooth
-  // elevation curve so there's no hard temperature jump at biome boundaries.
-  let baseTemp: number;
-  if (biome === "desert") baseTemp = 88;
-  else if (biome === "beach") baseTemp = 60;
-  else if (biome === "swamp") baseTemp = 50;
-  else if (biome === "deep_water") baseTemp = 40;
-  else if (biome === "shallow_water") baseTemp = 44;
-  else baseTemp = 62 - Math.max(0, elev - 0.38) * 70; // plains→hills→mountains→snow
-
-  return baseTemp + timeMod + elevMod;
+  return computeAmbientTemp(biome, elev, stats.daysTraveled % 1);
 }
 
 // --- Distance from start ---
@@ -1124,44 +1475,6 @@ function distanceFromStart(): string {
 
 window.addEventListener("beforeunload", doSave);
 setInterval(doSave, 60_000);
-
-// --- Water movement constraint ---
-function isWaterBiome(tx: number, ty: number): boolean {
-  const b = getBiome(
-    sampleElevation(tx, ty, elevation),
-    sampleMoisture(tx, ty, moisture),
-    sampleRiver(tx, ty, river),
-    sampleLake(tx, ty, river),
-  );
-  return b === "deep_water" || b === "shallow_water";
-}
-
-function getBiomeAt(tx: number, ty: number): string {
-  return getBiome(
-    sampleElevation(tx, ty, elevation),
-    sampleMoisture(tx, ty, moisture),
-    sampleRiver(tx, ty, river),
-    sampleLake(tx, ty, river),
-  );
-}
-
-function adjacentWaterBiome(tx: number, ty: number): BiomeProperties | null {
-  for (let ddx = -1; ddx <= 1; ddx++) {
-    for (let ddy = -1; ddy <= 1; ddy++) {
-      if (ddx === 0 && ddy === 0) continue;
-      if (isWaterBiome(tx + ddx, ty + ddy)) {
-        const b = getBiome(
-          sampleElevation(tx + ddx, ty + ddy, elevation),
-          sampleMoisture(tx + ddx, ty + ddy, moisture),
-          sampleRiver(tx + ddx, ty + ddy, river),
-          sampleLake(tx + ddx, ty + ddy, river),
-        );
-        return BIOMES[b];
-      }
-    }
-  }
-  return null;
-}
 
 // Returns the first cardinal neighbor that is not a water tile, or null if all are water.
 const ADJ_OFFSETS_R1 = [
@@ -1260,6 +1573,20 @@ function findNearbyDropTile(
   return null;
 }
 
+// Returns the nearest non-water tile to (tx, ty), scanning outward in Chebyshev rings.
+function findNearestLandTile(tx: number, ty: number, maxRadius = 60): { tileX: number; tileY: number } {
+  if (!isWaterBiome(tx, ty)) return { tileX: tx, tileY: ty };
+  for (let r = 1; r <= maxRadius; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        if (Math.abs(dx) < r && Math.abs(dy) < r) continue; // only the border of this ring
+        if (!isWaterBiome(tx + dx, ty + dy)) return { tileX: tx + dx, tileY: ty + dy };
+      }
+    }
+  }
+  return { tileX: tx, tileY: ty };
+}
+
 function autoDropCanoe(fromX: number, fromY: number) {
   if (stats.canoes <= 0) return;
   const tile = findNearbyDropTile(fromX, fromY) ?? {
@@ -1334,13 +1661,7 @@ function canEnterTile(tx: number, ty: number): boolean {
   if (b === 'deep_water') return false;
   // Hip waders extend shallow-water wading range to 3 tiles from shore; default is 1.
   const wadeRadius = stats.hipWaders > 0 ? 3 : 1;
-  for (let ddx = -wadeRadius; ddx <= wadeRadius; ddx++) {
-    for (let ddy = -wadeRadius; ddy <= wadeRadius; ddy++) {
-      if (ddx === 0 && ddy === 0) continue;
-      if (!isWaterBiome(tx + ddx, ty + ddy)) return true;
-    }
-  }
-  return false;
+  return canWadeShallowWater(wadeRadius, (ddx, ddy) => isWaterBiome(tx + ddx, ty + ddy));
 }
 
 // --- Player sprite overlay ---
@@ -1394,7 +1715,8 @@ const mendingHeartEl = makeIndicatorEl("❤️‍🩹");
 const energyLowEl   = makeIndicatorEl("⚡");
 const hungerEl       = makeIndicatorEl("🍖");
 const thirstEl       = makeIndicatorEl("💧");
-const allIndicators  = [snowflakeEl, mendingHeartEl, energyLowEl, hungerEl, thirstEl];
+const bleedingEl     = makeIndicatorEl("🩸");
+const allIndicators  = [snowflakeEl, mendingHeartEl, energyLowEl, hungerEl, thirstEl, bleedingEl];
 
 // --- Survey mode ---
 let surveyOffsetX = 0;
@@ -1429,15 +1751,17 @@ function computeSurveyRange(
     );
   }
   const horizonElev = horizonSum / RING;
-  const advantage = Math.max(0, playerElev - horizonElev);
-  // Advantage of 0.10 (hills) → ~72 tiles; 0.25 (mountain peak) → ~144 tiles.
+  // Horizon points below the player don't block — halve their weight so a
+  // single tall nearby peak doesn't collapse the whole survey range.
+  const advantage = Math.max(0, playerElev - horizonElev * 0.5);
+  // Base scales with own elevation so higher ground is intrinsically better.
   // Cap at what fits within the survey chunk radius to avoid black edges.
   const maxPossible = SURVEY_CHUNK_RADIUS * CHUNK_WIDTH - 24;
-  return Math.round(Math.min(24 + advantage * 480, maxPossible) * visMult);
+  return Math.round(Math.min(24 + playerElev * 48 + advantage * 500, maxPossible) * visMult);
 }
 
 function enterSurvey() {
-  forecastDepth = 3;
+  forecastDepth = 2;
   const tx = Math.floor(player.tileX);
   const ty = Math.floor(player.tileY);
   const currentWeatherForSurvey = weatherSystem.getCurrentEvent(
@@ -1695,14 +2019,15 @@ function showGameOver() {
     btn.style.color = "#d0d0d0";
   });
   btn.addEventListener("click", () => {
-    deleteSave(currentSeed);
+    gameOver = true; // prevent beforeunload from re-saving
+    deleteSave();
     localStorage.removeItem("manualPaused");
     window.location.reload();
   });
 
   box.append(title, sub, btn);
 
-  if (hasManualSave(currentSeed)) {
+  if (hasManualSave()) {
     const loadBtn = document.createElement("button");
     loadBtn.textContent = "Load save";
     loadBtn.style.cssText = `
@@ -1726,13 +2051,15 @@ function showGameOver() {
       loadBtn.style.color = "#a0a0e0";
     });
     loadBtn.addEventListener("click", () => {
-      // Copy manual save into the auto-save slot so the normal load path picks it up.
-      const manual = loadManualGame(currentSeed);
-      if (manual) {
-        localStorage.setItem(`frontier_${currentSeed}`, JSON.stringify(manual));
-      }
+      const seed = promoteManualToAuto();
       localStorage.removeItem("manualPaused");
-      window.location.reload();
+      if (seed) {
+        const url = new URL(window.location.href);
+        url.searchParams.set("seed", seed);
+        window.location.href = url.toString();
+      } else {
+        window.location.reload();
+      }
     });
     box.appendChild(loadBtn);
   }
@@ -1747,6 +2074,15 @@ let prevInShelter = false;
 let lastFacingDir: "up" | "down" | "left" | "right" = "down";
 let lastCanoeDir: "left" | "right" = "right";
 
+// --- Auto-walk ---
+let autoWalkMode = false;
+let autoWalkDx = 0;
+let autoWalkDy = 0;
+let prevWalkTileX = Math.floor(player.tileX);
+let prevWalkTileY = Math.floor(player.tileY);
+let cmdDownTime = 0;
+const CMD_LONGPRESS_MS = 500;
+
 function tick() {
   if (gameOver) return;
   requestAnimationFrame(tick);
@@ -1754,18 +2090,24 @@ function tick() {
   const now = performance.now();
   const delta = Math.min((now - lastTime) / 1000, 0.1);
   lastTime = now;
+  // Belt-and-suspenders: if the document has lost focus but the blur event
+  // didn't fire (can happen when switching to a native app on some systems),
+  // catch it here so the game never runs while the window is unfocused.
+  if (!document.hasFocus() && !blurPaused) {
+    blurPaused = true;
+    updatePauseState();
+  }
   // Pause the simulation while the radial menu is open or the game is paused.
   const isPaused = manualPaused || blurPaused;
   const effectiveDelta = isPaused || radialMenu.isOpen() || traders.isTradingPaused() ? 0 : delta;
 
   const tx = Math.floor(player.tileX);
   const ty = Math.floor(player.tileY);
-  const currentBiome = getBiome(
-    sampleElevation(tx, ty, elevation),
-    sampleMoisture(tx, ty, moisture),
-    sampleRiver(tx, ty, river),
-    sampleLake(tx, ty, river),
-  );
+  const tileElev   = sampleElevation(tx, ty, elevation);
+  const tileMoist  = sampleMoisture(tx, ty, moisture);
+  const tileRiver  = sampleRiver(tx, ty, river);
+  const tileLake   = sampleLake(tx, ty, river);
+  const currentBiome = getBiome(tileElev, tileMoist, tileRiver, tileLake);
   const biomeProps = BIOMES[currentBiome];
   const inWater =
     currentBiome === "deep_water" || currentBiome === "shallow_water";
@@ -1781,6 +2123,21 @@ function tick() {
   // Low morale saps energy — small speed penalty below the "Weary" threshold.
   const moraleMult = stats.morale < 40 ? 0.85 : 1;
   const cramponsMult = stats.crampons > 0 && (currentBiome === 'mountains' || currentBiome === 'hills') ? 1.5 : 1;
+
+  // Slope penalty: uphill land movement is slower and costs more energy.
+  let slopeMult = 1;
+  if (!inWater) {
+    const moveDx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    const moveDy = (input.down  ? 1 : 0) - (input.up   ? 1 : 0);
+    if (moveDx !== 0 || moveDy !== 0) {
+      const currElev = sampleElevation(tx, ty, elevation);
+      const destElev = sampleElevation(tx + moveDx, ty + moveDy, elevation);
+      const deltaElev = destElev - currElev;
+      if (deltaElev > 0.002)
+        slopeMult = Math.max(0.6, 1 - deltaElev * 50);
+    }
+  }
+
   const effectiveSpeed =
     (usingCanoe
       ? 1.5
@@ -1788,17 +2145,61 @@ function tick() {
     getWeightMultiplier(stats) *
     weatherEffects.moveMult *
     moraleMult *
-    cramponsMult;
+    cramponsMult *
+    slopeMult;
 
-  // Canoeing is easy; portaging is exhausting
+  // Canoeing is easy; portaging is exhausting; uphill drains extra energy.
+  const slopeEnergyMult = inWater ? 1 : Math.max(1, 2 - slopeMult);
   const effectiveBiome = usingCanoe
     ? { ...biomeProps, energyDrainPerTile: 0.1 }
     : carryingCanoe
-      ? {
-          ...biomeProps,
-          energyDrainPerTile: biomeProps.energyDrainPerTile * 2.75,
-        }
-      : biomeProps;
+      ? { ...biomeProps, energyDrainPerTile: biomeProps.energyDrainPerTile * 2.75 * slopeEnergyMult }
+      : slopeEnergyMult > 1
+        ? { ...biomeProps, energyDrainPerTile: biomeProps.energyDrainPerTile * slopeEnergyMult }
+        : biomeProps;
+
+  // Debug panel update
+  if (debugPanel.isVisible()) {
+    const dbHomeDx = player.tileX - startTileX, dbHomeDy = player.tileY - startTileY;
+    const dbDist = Math.sqrt(dbHomeDx * dbHomeDx + dbHomeDy * dbHomeDy) * MILES_PER_TILE;
+    const dbElevFt = Math.max(0, Math.round((tileElev - 0.42) / (1.0 - 0.42) * 14400));
+    const dbStepGrade = sampleElevation(player.stepTargetX, player.stepTargetY, elevation) - tileElev;
+    debugPanel.update({
+      tileX: tx, tileY: ty,
+      visualX: player.visualX, visualY: player.visualY,
+      distMiles: dbDist,
+      biome: currentBiome,
+      elevation: tileElev, elevationFt: dbElevFt,
+      moisture: tileMoist, riverVal: tileRiver, lakeVal: tileLake,
+      inWater, stepGrade: dbStepGrade,
+      speedBiome: usingCanoe ? 1.5 : biomeProps.speedMultiplier,
+      speedPortage: carryingCanoe ? 0.45 : 1,
+      speedWeight: getWeightMultiplier(stats),
+      speedWeather: weatherEffects.moveMult,
+      speedMorale: moraleMult,
+      speedCrampons: cramponsMult,
+      speedSlope: slopeMult,
+      speedNet: effectiveSpeed,
+      tph: PLAYER_SPEED * effectiveSpeed * (SECONDS_PER_DAY / 24),
+      usingCanoe, carryingCanoe, inShelter,
+      bleeding: stats.bleeding,
+      health: stats.health, energy: stats.energy,
+      morale: stats.morale, warmth: stats.warmth,
+      food: stats.food, water: stats.water,
+      minerals: stats.minerals, canoes: stats.canoes,
+      pelts: stats.pelts, rifleAmmo: stats.rifleAmmo, medicine: stats.medicine,
+      daysTraveled: stats.daysTraveled,
+      isDay: isDaylight(stats.daysTraveled),
+      ambientTempF: currentTemp,
+      currentWeather: currentWeather.type,
+      resolvedWeather: resolvedWeather.type,
+      weatherMoveMult: weatherEffects.moveMult,
+      activeActionId: stats.activeAction?.id ?? null,
+      actionProgressH: stats.activeAction ? stats.activeAction.progressDays * 24 : null,
+      actionDurationH: stats.activeAction ? stats.activeAction.durationDays * 24 : null,
+      seed: SEED,
+    });
+  }
 
   // Survey mode: freeze the player and redirect WASD to camera pan instead.
   const isSurveying = stats.activeAction?.id === "survey";
@@ -1816,6 +2217,14 @@ function tick() {
         surveyOffsetX = (surveyOffsetX / dist) * surveyMaxRange;
         surveyOffsetY = (surveyOffsetY / dist) * surveyMaxRange;
       }
+    } else {
+      // Drift camera back toward player when no keys held
+      const returnSpeed = 1.5; // fraction of offset closed per second (~2s return
+      const decay = 1 - returnSpeed * effectiveDelta;
+      surveyOffsetX *= decay;
+      surveyOffsetY *= decay;
+      if (Math.abs(surveyOffsetX) < 0.01) surveyOffsetX = 0;
+      if (Math.abs(surveyOffsetY) < 0.01) surveyOffsetY = 0;
     }
     // Update async-load progress bar
     if (surveyTotalQueue > 0) {
@@ -1830,9 +2239,23 @@ function tick() {
     }
   }
 
+  // Update auto-walk direction from the most recent completed tile step.
+  const curWalkTileX = Math.floor(player.tileX);
+  const curWalkTileY = Math.floor(player.tileY);
+  if (curWalkTileX !== prevWalkTileX || curWalkTileY !== prevWalkTileY) {
+    const vx = curWalkTileX - prevWalkTileX;
+    const vy = curWalkTileY - prevWalkTileY;
+    autoWalkDx = Math.abs(vx) >= Math.abs(vy) * 0.5 ? Math.sign(vx) : 0;
+    autoWalkDy = Math.abs(vy) >= Math.abs(vx) * 0.5 ? Math.sign(vy) : 0;
+    prevWalkTileX = curWalkTileX;
+    prevWalkTileY = curWalkTileY;
+  }
+
   const playerInput = isSurveying
     ? { up: false, down: false, left: false, right: false }
-    : input;
+    : (autoWalkMode && (autoWalkDx !== 0 || autoWalkDy !== 0))
+      ? { up: autoWalkDy < 0, down: autoWalkDy > 0, left: autoWalkDx < 0, right: autoWalkDx > 0 }
+      : input;
 
   const prevX = player.visualX;
   const prevY = player.visualY;
@@ -2022,23 +2445,6 @@ function tick() {
       timberPiles.addAmount(tx, ty, ev.timber, isWaterBiome, isOccupied);
   }
 
-  // Lightning: thunderstorm + high elevation + not sheltered = strike chance
-  if (resolvedWeather.type === "thunderstorm" && !inShelter) {
-    const playerElev = sampleElevation(tx, ty, elevation);
-    if (playerElev >= 0.65) {
-      const exposureFactor = Math.min(1, (playerElev - 0.65) / 0.17);
-      const strikeProbThisFrame =
-        (effectiveDelta / SECONDS_PER_DAY) *
-        5.4 *
-        resolvedWeather.intensity *
-        exposureFactor;
-      if (Math.random() < strikeProbThisFrame) {
-        const damage = 20 + Math.floor(Math.random() * 20);
-        stats.health = Math.max(0, stats.health - damage);
-        weatherOverlay.triggerLightningFlash();
-      }
-    }
-  }
 
   weatherOverlay.update(
     resolvedWeather,
@@ -2092,12 +2498,58 @@ function tick() {
     exitSurvey();
   }
 
+  // Wound treatment complete.
+  if (prevAction?.id === "treat_wound" && !stats.activeAction &&
+      prevAction.progressDays >= prevAction.durationDays) {
+    stats.bleeding = false;
+    showHudMessage("Wound treated — bleeding stopped.");
+  }
+
+  // Auto-save when a rest completes (player woke at dawn).
+  if (prevAction?.id === "rest" && !stats.activeAction &&
+      prevAction.progressDays >= prevAction.durationDays) {
+    doSave();
+    showHudMessage("Game saved.");
+  }
+
   // Deadfall trap placement: action completed → place trap at current tile.
   if (prevAction?.id === "build_deadfall" && !stats.activeAction &&
       prevAction.progressDays >= prevAction.durationDays) {
     traps.add(tx, ty, currentBiome);
     freshTrapTiles.add(`${tx},${ty}`);
     showHudMessage("Deadfall set. 🪤");
+  }
+
+  // Tracking result: find the nearest active man-eater and report direction.
+  if (prevAction?.id === "track_maneater" && !stats.activeAction) {
+    const activeHunts = settlements.getAcceptedManEaterQuests().filter(q => !q.completed);
+    if (activeHunts.length > 0) {
+      const livePositions = animals.getActiveManEaterPositions();
+      let bestQuest = activeHunts[0];
+      let bestX = bestQuest.spawnTileX;
+      let bestY = bestQuest.spawnTileY;
+      let bestDist = Infinity;
+      let bestIsLive = false;
+      for (const q of activeHunts) {
+        const live = livePositions.find(m => m.questId === q.id);
+        const qx = live ? live.tileX : q.spawnTileX;
+        const qy = live ? live.tileY : q.spawnTileY;
+        const d = Math.sqrt((qx - tx) ** 2 + (qy - ty) ** 2);
+        if (d < bestDist) { bestDist = d; bestQuest = q; bestX = qx; bestY = qy; bestIsLive = !!live; }
+      }
+      // Add imprecision when animal hasn't spawned yet (tracks are older)
+      if (!bestIsLive) {
+        const noise = bestDist * 0.2;
+        bestX += Math.round((Math.random() - 0.5) * 2 * noise);
+        bestY += Math.round((Math.random() - 0.5) * 2 * noise);
+      }
+      const ddx = bestX - tx, ddy = bestY - ty;
+      const miles = Math.sqrt(ddx * ddx + ddy * ddy) * MILES_PER_TILE;
+      const deg = ((Math.atan2(ddx, -ddy) * 180 / Math.PI) + 360) % 360;
+      const bearing = COMPASS_DIRS[Math.round(deg / 22.5) % 16];
+      const freshness = bestIsLive ? "Fresh tracks" : "Old tracks";
+      showHudMessage(`${freshness} — ${bestQuest.manEaterName} is ~${miles.toFixed(1)} mi ${bearing}`);
+    }
   }
 
   // Campfire fuel consumption and trap checks share the same elapsed-time window.
@@ -2139,6 +2591,17 @@ function tick() {
     foodAtLastMidnight        = stats.foodConsumed;
     waterAtLastMidnight       = stats.waterConsumed;
     foodSpoiledAtLastMidnight = stats.foodSpoiled;
+
+    // Advance rival parties for each day that passed
+    const daysPassed = currentDay - lastKnownDay;
+    const lostMsgs = tickRivalParties(rivalParties, daysPassed, capitalTileX, capitalTileY, MILES_PER_TILE);
+    for (const msg of lostMsgs) {
+      if (msg.startsWith('lost:')) {
+        const partyName = msg.slice(5);
+        activityLog.addEntry(`${partyName} has not been heard from in many weeks. Feared lost.`);
+      }
+    }
+
     lastKnownDay = currentDay;
   }
   updateDailyRecap(stats.daysTraveled);
@@ -2176,6 +2639,25 @@ function tick() {
   traps.update();
   ruinSprites.update();
   settlements.discover(tx, ty, startTileX, startTileY);
+
+  // Track visited locations (within 5 tiles of a settlement center).
+  for (const site of settlements.getSites()) {
+    const alreadyVisited = visitedLocations.some(v => v.tileX === site.centerTileX && v.tileY === site.centerTileY);
+    if (!alreadyVisited) {
+      const dist = Math.max(Math.abs(site.centerTileX - tx), Math.abs(site.centerTileY - ty));
+      if (dist <= 5) visitedLocations.push({ name: site.name, type: site.type, tileX: site.centerTileX, tileY: site.centerTileY });
+    }
+  }
+  // Track visited ruins (within 5 tiles of ruins pin center).
+  for (const pin of mapPins.getAll()) {
+    if (!pin.id.startsWith('ruins_')) continue;
+    const alreadyVisited = visitedLocations.some(v => v.tileX === pin.tileX && v.tileY === pin.tileY);
+    if (!alreadyVisited) {
+      const dist = Math.max(Math.abs(pin.tileX - tx), Math.abs(pin.tileY - ty));
+      if (dist <= 5) visitedLocations.push({ name: pin.name, type: 'ruins', tileX: pin.tileX, tileY: pin.tileY });
+    }
+  }
+  hud.updateVisited(visitedLocations, tx, ty);
   settlements.update(
     delta, tx, ty,
     (site) => {
@@ -2203,7 +2685,8 @@ function tick() {
       // Accept a man-eater quest: record day, spawn the animal
       quest.acceptedDay = stats.daysTraveled;
       quest.spawned = true;
-      animals.addManEater(quest.animalName, quest.spawnTileX, quest.spawnTileY, quest.id, quest.manEaterName);
+      const spawnLand = findNearestLandTile(quest.spawnTileX, quest.spawnTileY);
+      animals.addManEater(quest.animalName, spawnLand.tileX, spawnLand.tileY, quest.id, quest.manEaterName);
       // Place a vague map pin (centered on a 20-tile uncertainty circle)
       const pinTileX = quest.spawnTileX + Math.round((Math.random() * 2 - 1) * 20);
       const pinTileY = quest.spawnTileY + Math.round((Math.random() * 2 - 1) * 20);
@@ -2214,7 +2697,7 @@ function tick() {
         tileX: pinTileX, tileY: pinTileY,
         name: `${quest.manEaterName}?`,
         color: '#cc4444',
-        fixed: false,
+        fixed: true,
         dayPlaced: stats.daysTraveled,
         elevationFt: 0,
         biome: quest.biome,
@@ -2228,7 +2711,7 @@ function tick() {
       const qDirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
       const qBearing = qDirs[Math.round(qDeg / 22.5) % 16];
       const expireDay = Math.floor(stats.daysTraveled) + MANEATER_QUEST_EXPIRE_DAYS + 1;
-      showHudMessage(`Quest accepted: Hunt ${quest.manEaterName} — last seen ~${qMiles} mi ${qBearing}. Expires Day ${expireDay}. Location marked on map.`);
+      showHudMessage(`Quest accepted: Hunt ${quest.manEaterName} — last seen ~${qMiles} mi ${qBearing}. Expires Day ${expireDay}. Location marked on map.`, 8000);
     },
     (questId, pelts) => {
       // Claim reward
@@ -2239,6 +2722,7 @@ function tick() {
     },
     stats.trophies,
     stats.daysTraveled,
+    () => traders.showNews(),
   );
   const homeDx = player.tileX - startTileX, homeDy = player.tileY - startTileY;
   const milesFromStart = Math.sqrt(homeDx * homeDx + homeDy * homeDy) * MILES_PER_TILE;
@@ -2252,7 +2736,8 @@ function tick() {
   );
   for (const atk of animalAttacks) {
     stats.health = Math.max(0, stats.health - atk.damage);
-    showHudMessage(`You've been attacked! -${atk.damage} health`);
+    stats.bleeding = true;
+    showHudMessage(`You've been attacked! -${atk.damage} health — you are bleeding`);
   }
   fishJumps.update(effectiveDelta, player.visualX, player.visualY);
   mapPins.update();
@@ -2288,9 +2773,10 @@ function tick() {
     const activeIndicators: HTMLDivElement[] = [];
     if (stats.warmth < 50)  activeIndicators.push(snowflakeEl);
     if (stats.health < 50)  activeIndicators.push(mendingHeartEl);
-    if (stats.energy < 50)  activeIndicators.push(energyLowEl);
+    if (stats.energy < 10)  activeIndicators.push(energyLowEl);
     if (stats.food === 0)   activeIndicators.push(hungerEl);
     if (stats.water === 0)  activeIndicators.push(thirstEl);
+    if (stats.bleeding)     activeIndicators.push(bleedingEl);
 
     allIndicators.forEach(el => (el.style.display = "none"));
     if (activeIndicators.length > 0) {

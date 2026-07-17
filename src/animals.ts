@@ -76,7 +76,8 @@ const RARITY_WEIGHT: Record<Rarity, number> = {
   mythical:   0.3,
 };
 
-const MAX_ANIMALS      = 40;
+const MAX_ANIMALS          = 40;
+const MAX_NOCTURNAL_ANIMALS =  8; // wolves/trolls only spawn at night — cap them separately
 const SPAWN_RADIUS_MIN = 28;
 const SPAWN_RADIUS_MAX = 42;
 const DESPAWN_RADIUS   = 50;
@@ -297,8 +298,8 @@ export class AnimalManager {
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
       a.fleeing = true;
       a.gunFleeTimer = 8;
-      a.targetX = a.x + (dx / dist) * 40;
-      a.targetY = a.y + (dy / dist) * 40;
+      a.targetX = a.x + (dx / dist) * 10;
+      a.targetY = a.y + (dy / dist) * 10;
       a.wanderTimer = WANDER_RETARGET;
     }
   }
@@ -382,6 +383,13 @@ export class AnimalManager {
       manEaterName: name, nameplateEl,
     });
     return true;
+  }
+
+  // Current tile positions of all living man-eaters (for tracking).
+  getActiveManEaterPositions(): { questId: string; tileX: number; tileY: number }[] {
+    return this.animals
+      .filter(a => a.isManEater && !a.dead && a.manEaterQuestId)
+      .map(a => ({ questId: a.manEaterQuestId!, tileX: Math.floor(a.x), tileY: Math.floor(a.y) }));
   }
 
   // Returns save data for all active man-eaters (for persistence).
@@ -487,7 +495,12 @@ export class AnimalManager {
   }
 
   private spawn(px: number, py: number, isDay: boolean) {
-    if (this.animals.length >= MAX_ANIMALS) return;
+    const liveCount = this.animals.filter(a => !a.dead).length;
+    if (liveCount >= MAX_ANIMALS) return;
+    if (!isDay) {
+      const nocturnalCount = this.animals.filter(a => !a.dead && a.def.nocturnal).length;
+      if (nocturnalCount >= MAX_NOCTURNAL_ANIMALS) return;
+    }
     if (Math.random() > 0.15) return;
 
     const angle = Math.random() * Math.PI * 2;
@@ -687,7 +700,11 @@ export class AnimalManager {
         continue;
       }
 
-      if (a.hidden) { a.el.style.display = 'none'; continue; }
+      if (a.hidden) {
+        a.el.style.display = 'none';
+        if (a.nameplateEl) a.nameplateEl.style.display = 'none';
+        continue;
+      }
       a.el.style.filter = a.blinkTimer > 0 ? 'sepia(1) saturate(20) hue-rotate(-20deg)' : '';
       a.el.style.display = onScreen ? 'block' : 'none';
       a.el.style.left = `${sx}px`;

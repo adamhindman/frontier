@@ -16,7 +16,7 @@ function isWaterTile(tx: number, ty: number, elev: NoiseFunction2D, moist: Noise
   return b === 'deep_water' || b === 'shallow_water';
 }
 
-const MAX_TRADERS    = 2;
+const MAX_TRADERS    = 1;
 const SPAWN_MIN      = 22;
 const SPAWN_MAX      = 36;
 const DESPAWN_DIST   = 48;
@@ -24,7 +24,7 @@ const SPEED          = 1.1;
 const DIR_HOLD_MIN   = 22;
 const DIR_HOLD_MAX   = 55;
 const PACK_OFFSET    = 1.6;
-const SPAWN_INTERVAL = 50;
+const SPAWN_INTERVAL = 100;
 const STOP_RADIUS    = 5;   // tiles — halt and show talk bubble within this distance
 
 interface TraderStock {
@@ -42,7 +42,7 @@ interface TraderStock {
 }
 
 function makeStock(): TraderStock {
-  return { food: 3, water: 3, ammo: 2, heavyCoat: 1, hipWaders: 1, liquor: 2, medicine: 2, precisionRifle: 1, lodestone: 1, tools: 1, crampons: 1 };
+  return { food: 3, water: 3, ammo: 5, heavyCoat: 1, hipWaders: 1, liquor: 2, medicine: 2, precisionRifle: 1, lodestone: 1, tools: 1, crampons: 1 };
 }
 
 interface TradeItemDef {
@@ -55,17 +55,17 @@ interface TradeItemDef {
 }
 
 const TRADE_ITEMS: TradeItemDef[] = [
-  { key: 'food',      emoji: '🍖', label: 'Food',         detail: '20 lbs',                    cost: 1, apply: s => { s.food      = Math.min(FOOD_CAPACITY_LBS,  s.food  + 20); } },
-  { key: 'water',     emoji: '💧', label: 'Water',        detail: '10 gal',                    cost: 1, apply: s => { s.water     = Math.min(WATER_CAPACITY_GAL, s.water + 10); } },
-  { key: 'ammo',      emoji: '🔫', label: 'Ammunition',   detail: '10 rounds',                 cost: 1, apply: s => { s.rifleAmmo += 10; } },
-  { key: 'heavyCoat', emoji: '🧥', label: 'Heavy Coat',   detail: 'Feels 10°F warmer',         cost: 10, apply: s => { s.heavyCoat++; } },
-  { key: 'hipWaders', emoji: '👖', label: 'Hip Waders',   detail: 'Wade 3 tiles from shore',   cost: 4, apply: s => { s.hipWaders++; } },
-  { key: 'liquor',    emoji: '🍶', label: 'Liquor',       detail: 'Restores morale & warmth',  cost: 2, apply: s => { s.liquor++; } },
-  { key: 'medicine',       emoji: '💊', label: 'Medicine',        detail: 'Restores health',                           cost: 2, apply: s => { s.medicine++; } },
-  { key: 'precisionRifle', emoji: '🎯', label: 'Precision Musket', detail: '+2 range · less wobble · less inaccuracy',   cost: 15, apply: s => { s.precisionRifle = 1; } },
-  { key: 'lodestone',      emoji: '🧲', label: 'Lodestone',       detail: 'Points toward nearest nameless ruin',        cost: 10, apply: s => { s.lodestone = 1; } },
-  { key: 'tools',          emoji: '🧰', label: 'Tools',           detail: 'Halves canoe and shelter build time',        cost:  6, apply: s => { s.tools = 1; } },
-  { key: 'crampons',       emoji: '🥾', label: 'Crampons',        detail: '+50% speed in mountains and hills',          cost:  8, apply: s => { s.crampons = 1; } },
+  { key: 'food',      emoji: '🍖', label: 'Food',         detail: '20 lbs',                    cost:  2, apply: s => { s.food      = Math.min(FOOD_CAPACITY_LBS,  s.food  + 20); } },
+  { key: 'water',     emoji: '💧', label: 'Water',        detail: '10 gal',                    cost:  2, apply: s => { s.water     = Math.min(WATER_CAPACITY_GAL, s.water + 10); } },
+  { key: 'ammo',      emoji: '🔫', label: 'Ammunition',   detail: '10 rounds',                 cost:  2, apply: s => { s.rifleAmmo += 10; } },
+  { key: 'heavyCoat', emoji: '🧥', label: 'Heavy Coat',   detail: 'Feels 10°F warmer',         cost: 20, apply: s => { s.heavyCoat++; } },
+  { key: 'hipWaders', emoji: '👖', label: 'Hip Waders',   detail: 'Wade 3 tiles from shore',   cost:  8, apply: s => { s.hipWaders++; } },
+  { key: 'liquor',    emoji: '🍶', label: 'Liquor',       detail: 'Restores morale & warmth',  cost:  4, apply: s => { s.liquor++; } },
+  { key: 'medicine',       emoji: '💊', label: 'Medicine',        detail: 'Restores health',                           cost:  4, apply: s => { s.medicine++; } },
+  { key: 'precisionRifle', emoji: '🎯', label: 'Precision Musket', detail: '+2 range · less wobble · less inaccuracy',   cost: 30, apply: s => { s.precisionRifle = 1; } },
+  { key: 'lodestone',      emoji: '🧲', label: 'Lodestone',       detail: 'Points toward nearest nameless ruin',        cost: 20, apply: s => { s.lodestone = 1; } },
+  { key: 'tools',          emoji: '🧰', label: 'Tools',           detail: 'Halves canoe and shelter build time',        cost: 12, apply: s => { s.tools = 1; } },
+  { key: 'crampons',       emoji: '🥾', label: 'Crampons',        detail: '+50% speed in mountains and hills',          cost: 16, apply: s => { s.crampons = 1; } },
 ];
 
 interface TraderInstance {
@@ -93,6 +93,13 @@ export class TraderManager {
   private spawnTimer:     number           = 5;
   private tradingPaused:  boolean          = false;
   private tradeOverlayEl: HTMLElement | null = null;
+  private newsProvider:   (() => string[]) | null = null;
+
+  setNewsProvider(fn: () => string[]): void { this.newsProvider = fn; }
+
+  showNews(): void {
+    if (this.newsProvider) this.showNewsPopup(this.newsProvider());
+  }
 
   constructor(
     private canvasEl: HTMLCanvasElement,
@@ -279,7 +286,8 @@ export class TraderManager {
 
     // Footer
     const footer = document.createElement('div');
-    footer.style.cssText = 'margin-top: 14px; text-align: center;';
+    footer.style.cssText = 'margin-top: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px;';
+
     const closeBtn = document.createElement('button');
     closeBtn.textContent = 'Close';
     closeBtn.style.cssText = `
@@ -315,6 +323,54 @@ export class TraderManager {
     this.tradeOverlayEl?.remove();
     this.tradeOverlayEl = null;
     this.tradingPaused  = false;
+  }
+
+  private showNewsPopup(lines: string[]): void {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.65);
+      z-index: 2100;
+      display: flex; align-items: center; justify-content: center;
+    `;
+    const panel = document.createElement('div');
+    panel.style.cssText = `
+      background: rgba(14,14,14,0.97);
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 8px;
+      padding: 22px 26px;
+      min-width: 380px;
+      max-width: 480px;
+      font: 13px/1 monospace;
+      color: #bbb;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.8);
+      display: flex; flex-direction: column; gap: 12px;
+    `;
+    const title = document.createElement('div');
+    title.textContent = 'Expedition News';
+    title.style.cssText = 'color: #c8a84a; font-size: 14px; margin-bottom: 4px;';
+    panel.appendChild(title);
+    const divider = document.createElement('div');
+    divider.style.cssText = 'border-top: 1px solid rgba(255,255,255,0.08);';
+    panel.appendChild(divider);
+    for (const line of lines) {
+      const row = document.createElement('div');
+      row.textContent = line;
+      row.style.cssText = 'color: #999; font-size: 12px; line-height: 1.5;';
+      panel.appendChild(row);
+    }
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = 'Close';
+    closeBtn.style.cssText = `
+      background: none; border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 4px; color: #777; font: 12px monospace;
+      padding: 6px 28px; cursor: pointer; align-self: center; margin-top: 4px;
+    `;
+    closeBtn.addEventListener('click', () => overlay.remove());
+    panel.appendChild(closeBtn);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   }
 
   openVillageMenu(villageName: string, villageId: string, stats: PlayerStats, distanceMiles = 0): void {

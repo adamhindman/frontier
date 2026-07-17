@@ -8,6 +8,7 @@ export interface MapPin {
   name: string;
   color: string;
   fixed?: boolean;        // auto-placed, non-editable (settlements, villages)
+  suggestName?: () => string; // if set, shows a "random name" button in the edit UI
   dayPlaced: number;      // game-days elapsed when the pin was created
   elevationFt: number;    // approximate feet above sea level
   biome: string;          // biome name at the tile
@@ -143,24 +144,52 @@ export class MapPinManager {
         width: ${Math.max(pin.name.length * 8, 90)}px;
         padding: 0;
       `;
-      nameSpan.replaceWith(input);
-      input.focus();
-      input.select();
 
       const commit = () => {
         const newName = input.value.trim() || pin.name;
         const changed = newName !== pin.name;
         pin.name = newName;
         nameSpan.textContent = newName;
-        input.replaceWith(nameSpan);
+        editRow.replaceWith(nameSpan);
         if (changed) this.onRename?.(pin.id, newName);
       };
-      input.addEventListener('blur', commit);
       input.addEventListener('keydown', (e) => {
         e.stopPropagation(); // prevent game hotkeys while typing
         if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
         if (e.key === 'Escape') { input.value = pin.name; input.blur(); }
       });
+
+      const editRow = document.createElement('span');
+      editRow.style.cssText = 'display:inline-flex; align-items:center; gap:6px;';
+      editRow.append(input);
+
+      if (pin.suggestName) {
+        const randBtn = document.createElement('button');
+        randBtn.textContent = '🎲';
+        randBtn.title = 'Suggest a random name';
+        randBtn.style.cssText = `
+          background: rgba(255,255,255,0.15);
+          border: 1px solid rgba(255,255,255,0.3);
+          border-radius: 3px;
+          color: #fff;
+          font: 13px/1 monospace;
+          cursor: pointer;
+          padding: 1px 5px;
+          flex-shrink: 0;
+        `;
+        randBtn.addEventListener('mousedown', (e) => {
+          e.preventDefault(); // don't blur the input
+          input.value = pin.suggestName!();
+          input.style.width = `${Math.max(input.value.length * 8, 90)}px`;
+          input.focus();
+        });
+        editRow.append(randBtn);
+      }
+
+      nameSpan.replaceWith(editRow);
+      input.addEventListener('blur', commit);
+      input.focus();
+      input.select();
     };
 
     if (!pin.fixed) {

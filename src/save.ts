@@ -5,11 +5,21 @@ import type { Quest } from './quests';
 import type { TrapSaveEntry } from './traps';
 import type { ManEaterQuest } from './manEaterQuests';
 import type { ManEaterSave } from './animals';
+import type { RivalParty } from './rivalParties';
+
+export interface RaceState {
+  rivalParties: RivalParty[];
+  capitalUnlocked: boolean;
+}
 
 const SAVE_VERSION = 3;
 
+const AUTO_KEY   = 'frontier_autosave';
+const MANUAL_KEY = 'frontier_manualsave';
+
 export interface SaveData {
   version: number;
+  seed: string;
   weatherSeed: number;
   stats: PlayerStats;
   playerTileX: number;
@@ -24,14 +34,8 @@ export interface SaveData {
   traps?:   TrapSaveEntry[];
   manEaterQuests?: { siteId: string; quests: ManEaterQuest[] }[];
   activeManEaters?: ManEaterSave[];
-}
-
-function saveKey(seed: string): string {
-  return `frontier_${seed}`;
-}
-
-function manualSaveKey(seed: string): string {
-  return `frontier_manual_${seed}`;
+  visitedLocations?: { name: string; type: string; tileX: number; tileY: number }[];
+  raceState?: RaceState;
 }
 
 export function saveGame(
@@ -50,9 +54,12 @@ export function saveGame(
   traps:   SaveData['traps'],
   manEaterQuests?: SaveData['manEaterQuests'],
   activeManEaters?: SaveData['activeManEaters'],
+  visitedLocations?: SaveData['visitedLocations'],
+  raceState?: SaveData['raceState'],
 ): void {
   const data: SaveData = {
     version: SAVE_VERSION,
+    seed,
     weatherSeed,
     stats: { ...stats, activeAction: null }, // don't restore mid-action
     playerTileX,
@@ -67,17 +74,19 @@ export function saveGame(
     traps,
     manEaterQuests,
     activeManEaters,
+    visitedLocations,
+    raceState,
   };
   try {
-    localStorage.setItem(saveKey(seed), JSON.stringify(data));
+    localStorage.setItem(AUTO_KEY, JSON.stringify(data));
   } catch {
     // Storage full or unavailable — silently skip
   }
 }
 
-export function loadGame(seed: string): SaveData | null {
+export function loadGame(): SaveData | null {
   try {
-    const raw = localStorage.getItem(saveKey(seed));
+    const raw = localStorage.getItem(AUTO_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw) as SaveData;
     if (data.version !== SAVE_VERSION) return null;
@@ -96,14 +105,15 @@ export function loadGame(seed: string): SaveData | null {
     data.stats.tools           ??= 0;
     data.stats.crampons        ??= 0;
     data.stats.trophies        ??= [];
+    data.stats.bleeding        ??= false;
     return data;
   } catch {
     return null;
   }
 }
 
-export function deleteSave(seed: string): void {
-  localStorage.removeItem(saveKey(seed));
+export function deleteSave(): void {
+  localStorage.removeItem(AUTO_KEY);
 }
 
 export function saveManualGame(
@@ -122,9 +132,12 @@ export function saveManualGame(
   traps:  SaveData['traps'],
   manEaterQuests?: SaveData['manEaterQuests'],
   activeManEaters?: SaveData['activeManEaters'],
+  visitedLocations?: SaveData['visitedLocations'],
+  raceState?: SaveData['raceState'],
 ): void {
   const data: SaveData = {
     version: SAVE_VERSION,
+    seed,
     weatherSeed,
     stats: { ...stats, activeAction: null },
     playerTileX,
@@ -139,17 +152,19 @@ export function saveManualGame(
     traps,
     manEaterQuests,
     activeManEaters,
+    visitedLocations,
+    raceState,
   };
   try {
-    localStorage.setItem(manualSaveKey(seed), JSON.stringify(data));
+    localStorage.setItem(MANUAL_KEY, JSON.stringify(data));
   } catch {
     // Storage full or unavailable — silently skip
   }
 }
 
-export function loadManualGame(seed: string): SaveData | null {
+export function loadManualGame(): SaveData | null {
   try {
-    const raw = localStorage.getItem(manualSaveKey(seed));
+    const raw = localStorage.getItem(MANUAL_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw) as SaveData;
     if (data.version !== SAVE_VERSION) return null;
@@ -174,6 +189,30 @@ export function loadManualGame(seed: string): SaveData | null {
   }
 }
 
-export function hasManualSave(seed: string): boolean {
-  return localStorage.getItem(manualSaveKey(seed)) !== null;
+export function hasManualSave(): boolean {
+  return localStorage.getItem(MANUAL_KEY) !== null;
+}
+
+export function promoteManualToAuto(): string | null {
+  const raw = localStorage.getItem(MANUAL_KEY);
+  if (!raw) return null;
+  try {
+    localStorage.setItem(AUTO_KEY, raw);
+    const data = JSON.parse(raw) as SaveData;
+    return data.seed ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Remove any legacy per-seed save keys left from the old save format. */
+export function cleanLegacySaves(): void {
+  const toRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('frontier_') && k !== AUTO_KEY && k !== MANUAL_KEY) {
+      toRemove.push(k);
+    }
+  }
+  for (const k of toRemove) localStorage.removeItem(k);
 }

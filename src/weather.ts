@@ -121,7 +121,7 @@ export function getWeatherEffects(event: WeatherEvent): WeatherEffects {
       return { moveMult: 1.0, warmthDrainMult: 1.0, forageMult: 0.95, moraleDrainPerDay: 1,   surveyVisibilityMult: 0.80 };
     case 'fog':
       return { moveMult: 1.0, warmthDrainMult: 1.0 + i * 0.05, forageMult: 0.9, moraleDrainPerDay: i * 2,
-               surveyVisibilityMult: i === 1 ? 0.35 : i === 2 ? 0.18 : 0.08 };
+               surveyVisibilityMult: i === 1 ? 0.10 : i === 2 ? 0.05 : 0.02 };
     case 'rain':
       return { moveMult: 1.0, warmthDrainMult: 1.0 + i * 0.4, forageMult: 1.0 - i * 0.15, moraleDrainPerDay: i * 3,
                surveyVisibilityMult: 1.0 - i * 0.15 };

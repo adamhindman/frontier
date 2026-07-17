@@ -49,7 +49,7 @@ export interface PlayerStats {
   statusConditions: StatusCondition[];
   activeAction: ActiveAction | null;
   rifleAmmo: number; // rounds remaining; starts at 50
-  pelts: number;     // fur pelts collected; no capacity cap
+  pelts: number;     // fur pelts collected; no hard cap but adds to carry weight
   heavyCoat: number; // count owned; each adds +10°F to effective ambient temp for warmth drain
   hipWaders: number; // count owned; allows wading 3 tiles from shore instead of 1
   liquor: number;         // consumable count; restores morale + warmth on use
@@ -59,6 +59,7 @@ export interface PlayerStats {
   tools: number;          // 1 when owned; halves canoe and shelter build time
   crampons: number;       // 1 when owned; +50% speed in mountains and hills
   trophies: Trophy[];     // man-eater kills ready to claim as quest rewards
+  bleeding: boolean;     // true after an animal attack; drains 5 hp/hour until treated
 }
 
 export const SECONDS_PER_DAY    = 120;
@@ -76,8 +77,8 @@ export function isDaylight(daysTraveled: number): boolean {
 }
 
 // Passive gather: probability per tile per resource unit of triggering a find
-const PASSIVE_GATHER_PROB          = 0.0002;
-const PASSIVE_FOOD_AMOUNT_PER_RES  = 0.05;  // lbs per resource unit (0-10 scale)
+const PASSIVE_GATHER_PROB          = 0.0004;
+const PASSIVE_FOOD_AMOUNT_PER_RES  = 0.10;  // lbs per resource unit (0-10 scale)
 const PASSIVE_WATER_AMOUNT_PER_RES = 0.07;
 
 const PASSIVE_FOOD_EMOJIS = ['🌿', '🫐', '🌰', '🍓'] as const;
@@ -86,7 +87,7 @@ const PASSIVE_FOOD_EMOJIS = ['🌿', '🫐', '🌰', '🍓'] as const;
 // per-tick amounts are divided by the same constant so hourly totals stay identical.
 const FORAGE_TICKS_PER_HOUR = 4; // tick every 15 game-minutes (~1.25 real seconds)
 // Fish via adjacent water tile — rate set here; plant food and water use per-biome fields.
-const FORAGE_FISH_FACTOR    = 0.25 / FORAGE_TICKS_PER_HOUR;
+const FORAGE_FISH_FACTOR    = 0.375 / FORAGE_TICKS_PER_HOUR;
 const HARVEST_TIMBER_FACTOR = 0.80 / FORAGE_TICKS_PER_HOUR;
 
 export type ForageEvent = { emoji: string; timber?: number };
@@ -98,7 +99,7 @@ const SPOILAGE_MIN_PER_DAY  = 1.0;  // floor: always lose at least this much if 
 
 const REST_FOOD_DRAIN_PER_DAY   = 3.4;  // lbs/day (on top of background → ~4.3 total)
 const REST_WATER_DRAIN_PER_DAY  = 1.0;  // gal/day (on top of background → ~1.5 total)
-const REST_ENERGY_GAIN_PER_DAY  = 25;
+const REST_ENERGY_GAIN_PER_DAY  = 31.25;
 
 const FORAGE_FOOD_DRAIN_PER_DAY    = 2.7; // lbs/day (on top of background → ~3.6 total)
 const FORAGE_WATER_DRAIN_PER_DAY   = 0.5; // gal/day (on top of background → ~1.0 total)
@@ -148,6 +149,7 @@ function stepMoraleUp(morale: number): number {
   return morale; // already Elated
 }
 
+const BLEED_HEALTH_DRAIN_PER_DAY = 120; // 5 hp/hour; ~20 hours to die if untreated
 const HEALTH_DRAIN_NO_FOOD_PER_DAY = 20; // ~5 days to die
 const HEALTH_DRAIN_NO_WATER_PER_DAY = 50; // ~2 days to die
 const HEALTH_DRAIN_NO_MORALE_PER_DAY = 5; // slow, more a debuff
@@ -189,15 +191,16 @@ export function createStats(): PlayerStats {
     medicine: 0,
     precisionRifle: 0,
     lodestone: 0,
-    tools: 1,
-    crampons: 1,
+    tools: 0,
+    crampons: 0,
     trophies: [],
+    bleeding: false,
   };
 }
 
-// Speed penalty from carried food + water weight. 1.0 = unencumbered, floors at 0.5.
+// Speed penalty from carried food, water, and pelts. 1.0 = unencumbered, floors at 0.5.
 export function getWeightMultiplier(stats: PlayerStats): number {
-  const totalLbs = stats.food + stats.water;
+  const totalLbs = stats.food + stats.water + stats.pelts * 0.3;
   return Math.max(0.5, 1 - totalLbs * 0.01);
 }
 
@@ -219,6 +222,11 @@ export function updateStats(
   weatherEffects?: WeatherEffects,
   portaging = false,
 ): { timeTicking: boolean; forageEvents: ForageEvent[] } {
+  // Hard guard: if the game is paused (delta=0) and the player isn't moving,
+  // skip all stat mutations entirely. Belt-and-suspenders on top of effectiveDelta=0.
+  if (delta <= 0 && tilesMoved <= MOVE_THRESHOLD) {
+    return { timeTicking: false, forageEvents: [] };
+  }
   const isMoving = tilesMoved > MOVE_THRESHOLD;
   const timeTicking = true; // clock runs continuously; callers pass delta=0 to pause
   const forageEvents: ForageEvent[] = [];
@@ -357,6 +365,8 @@ export function updateStats(
         0,
         stats.health - gameDays * HEALTH_DRAIN_NO_ENERGY_PER_DAY,
       );
+    if (stats.bleeding)
+      stats.health = Math.max(0, stats.health - gameDays * BLEED_HEALTH_DRAIN_PER_DAY);
 
     // Regeneration when well-supplied: health recovers proportional to morale,
     // morale recovers proportional to health. Shelter while resting multiplies both.
@@ -472,6 +482,23 @@ export function updateStats(
           if (stats.activeAction.progressDays >= stats.activeAction.durationDays) {
             stats.activeAction = null;
           }
+        }
+      } else if (stats.activeAction.id === 'track_maneater') {
+        if (!isDaylight(stats.daysTraveled)) {
+          stats.activeAction = null;
+        } else {
+          { const f = stats.food, w = stats.water;
+            stats.food  = Math.max(0, stats.food  - gameDays * FORAGE_FOOD_DRAIN_PER_DAY);
+            stats.water = Math.max(0, stats.water - gameDays * FORAGE_WATER_DRAIN_PER_DAY);
+            stats.foodConsumed  += f - stats.food;
+            stats.waterConsumed += w - stats.water; }
+          if (stats.activeAction.progressDays >= stats.activeAction.durationDays) {
+            stats.activeAction = null;
+          }
+        }
+      } else if (stats.activeAction.id === 'treat_wound') {
+        if (stats.activeAction.progressDays >= stats.activeAction.durationDays) {
+          stats.activeAction = null;
         }
       } else if (stats.activeAction.id === 'harvest_timber') {
         // Timber can be chopped at night.

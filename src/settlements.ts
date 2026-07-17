@@ -167,11 +167,11 @@ function villageName(rng: () => number): string {
 
 // ── World placement constants ─────────────────────────────────────────────────
 
-const SETTLEMENT_REGION = 200; // tile side length per region cell (~10 mi)
-const SETTLEMENT_BASE_PROB = 0.45; // probability at origin
-const SETTLEMENT_SCALE_MILES = 60; // e-fold drop distance
+const SETTLEMENT_REGION = 150; // tile side length per region cell (~7.5 mi)
+const SETTLEMENT_BASE_PROB = 0.45; // probability per region cell
+const SETTLEMENT_SCALE_MILES = 500; // effectively flat decay within any normal exploration range
 
-const VILLAGE_REGION = 128; // tile side (~6.4 mi); 62% → avg ~one per 10 mi of travel
+const VILLAGE_REGION = 256; // tile side (~12.8 mi); 62% → avg ~one per 20 mi of travel
 const VILLAGE_PROB = 0.62;
 
 const SETTLEMENT_BIOMES = new Set(["plains", "hills", "forest", "beach"]);
@@ -278,6 +278,7 @@ export class SettlementManager {
   // Callbacks set each update() call.
   private _onTrade: ((site: SettlementSite) => void) | null = null;
   private _onRest: ((site: SettlementSite) => void) | null = null;
+  private _onNews: (() => void) | null = null;
   private _onAcceptQuest: ((quest: ManEaterQuest) => void) | null = null;
   private _onClaimReward: ((questId: string, pelts: number) => void) | null = null;
   private _trophies: Trophy[] = [];
@@ -503,16 +504,21 @@ export class SettlementManager {
     const restBtn = document.createElement("button");
     restBtn.textContent = "Rest in village";
     restBtn.style.cssText = btnCss;
-    popup.append(nameLabel, tradeBtn, restBtn);
+    const newsBtn = document.createElement("button");
+    newsBtn.textContent = "Expedition news";
+    newsBtn.style.cssText = btnCss;
+    popup.append(nameLabel, tradeBtn, restBtn, newsBtn);
     document.body.appendChild(popup);
     this.popups.set(id, popup);
 
-    // Generate man-eater quests for villages
+    // Generate man-eater quests for villages (skip if already restored from save)
     if (type === 'village') {
-      const questRng = makeRng(`${this.worldSeed}_quests_${id}`);
-      const siteQuests = generateManEaterQuests(id, name, tileX, tileY, tileBiome, questRng);
-      this.quests.set(id, siteQuests);
-
+      if (!this.quests.has(id)) {
+        const questRng = makeRng(`${this.worldSeed}_quests_${id}`);
+        const siteQuests = generateManEaterQuests(id, name, tileX, tileY, tileBiome, questRng);
+        this.quests.set(id, siteQuests);
+      }
+      const siteQuests = this.quests.get(id)!;
       if (siteQuests.length > 0) {
         const questsBtn = document.createElement('button');
         questsBtn.textContent = `Quests (${siteQuests.length})`;
@@ -526,12 +532,9 @@ export class SettlementManager {
     }
 
     // Wire up buttons once; use instance-level callbacks so they reflect the latest call.
-    tradeBtn.addEventListener("click", () => {
-      this._onTrade?.(site);
-    });
-    restBtn.addEventListener("click", () => {
-      this._onRest?.(site);
-    });
+    tradeBtn.addEventListener("click", () => { this._onTrade?.(site); });
+    restBtn.addEventListener("click",  () => { this._onRest?.(site); });
+    newsBtn.addEventListener("click",  () => { this._onNews?.(); });
 
     // Add non-editable map pin (skip if pin already exists from a prior session's save)
     const pinColor = type === "settlement" ? "#7a6040" : "#8b2020";
@@ -576,9 +579,11 @@ export class SettlementManager {
     onClaimReward: ((questId: string, pelts: number) => void) | null = null,
     trophies: Trophy[] = [],
     daysTraveled = 0,
+    onNews: (() => void) | null = null,
   ): void {
     this._onTrade = onTrade;
     this._onRest = onRest;
+    this._onNews = onNews;
     this._onAcceptQuest = onAcceptQuest;
     this._onClaimReward = onClaimReward;
     this._trophies = trophies;
@@ -677,6 +682,10 @@ export class SettlementManager {
     }
   }
 
+  getSites(): SettlementSite[] {
+    return [...this.sites];
+  }
+
   getResidentDescriptionAt(tileX: number, tileY: number): string | null {
     const cx = tileX + 0.5, cy = tileY + 0.5;
     for (const resList of this.residents.values()) {
@@ -743,9 +752,24 @@ export class SettlementManager {
   }
 
   markQuestCompleted(questId: string): void {
-    for (const quests of this.quests.values()) {
+    for (const [siteId, quests] of this.quests.entries()) {
       const q = quests.find(q => q.id === questId);
-      if (q) { q.completed = true; return; }
+      if (q) {
+        q.completed = true;
+        this._refreshQuestBtn(siteId);
+        return;
+      }
+    }
+  }
+
+  private _refreshQuestBtn(siteId: string): void {
+    const btn = this.questsBtns.get(siteId);
+    if (!btn) return;
+    const remaining = (this.quests.get(siteId) ?? []).filter(q => !q.completed).length;
+    if (remaining === 0) {
+      btn.style.display = 'none';
+    } else {
+      btn.textContent = `Quests (${remaining})`;
     }
   }
 
@@ -818,20 +842,21 @@ export class SettlementManager {
     header.append(title, closeBtn);
     el.appendChild(header);
 
-    if (quests.length === 0) {
-      const none = document.createElement('div');
-      none.textContent = 'No quests available.';
-      none.style.color = '#888';
-      el.appendChild(none);
-    }
-
     const btnCss = `
       background: rgba(160,140,80,0.10); border: 1px solid rgba(255,255,255,0.18);
       border-radius: 4px; color: #d0c080; font: 12px/1 monospace;
       padding: 6px 12px; cursor: pointer; margin-top: 6px;
     `;
 
-    for (const q of quests) {
+    const visibleQuests = quests.filter(q => !q.completed);
+    if (visibleQuests.length === 0) {
+      const none = document.createElement('div');
+      none.textContent = 'No quests available.';
+      none.style.color = '#888';
+      el.appendChild(none);
+    }
+
+    for (const q of visibleQuests) {
       const row = document.createElement('div');
       row.style.cssText = 'border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:10px; margin-bottom:2px;';
 
@@ -841,17 +866,9 @@ export class SettlementManager {
       nameSpan.style.cssText = 'font-weight:bold;';
 
       const hasTrophy = this._trophies.some(t => t.questId === q.id);
-      const isExpired = q.completed && !hasTrophy;
 
-      if (q.completed && hasTrophy) {
-        nameSpan.textContent = `${q.animalEmoji} ${q.manEaterName}`;
-        nameSpan.style.color = '#7cc87c';
-      } else if (isExpired) {
-        nameSpan.textContent = `✗ ${q.manEaterName}`;
-        nameSpan.style.color = '#888';
-      } else {
-        nameSpan.textContent = `${q.animalEmoji} ${q.manEaterName}`;
-      }
+      nameSpan.textContent = `${q.animalEmoji} ${q.manEaterName}`;
+      if (hasTrophy) nameSpan.style.color = '#7cc87c';
 
       const rewardSpan = document.createElement('span');
       rewardSpan.textContent = `${q.reward} pelts`;
@@ -860,12 +877,7 @@ export class SettlementManager {
       nameRow.append(nameSpan, rewardSpan);
       row.appendChild(nameRow);
 
-      if (isExpired) {
-        const expiredMsg = document.createElement('div');
-        expiredMsg.textContent = 'Expired.';
-        expiredMsg.style.color = '#666';
-        row.appendChild(expiredMsg);
-      } else if (hasTrophy) {
+      if (hasTrophy) {
         const msg = document.createElement('div');
         msg.textContent = `You have defeated ${q.manEaterName}!`;
         msg.style.color = '#7cc87c';
