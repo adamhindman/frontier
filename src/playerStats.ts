@@ -267,9 +267,9 @@ export function updateStats(
 
     let gameDays = delta / SECONDS_PER_DAY;
 
-    if (stats.activeAction?.id === "rest" && stats.warmth >= 50) {
-      // Speed time up so rest completes in roughly max(min(durationDays, 5), 1) real seconds.
-      // Drops to real-time when warmth falls below 50 so the player notices freezing.
+    if (stats.activeAction?.id === "rest") {
+      // Speed time up so rest completes in roughly max(min(durationDays, 5), 1) real seconds,
+      // at a constant linear rate regardless of warmth (cold still drains health separately below).
       const totalDays = stats.activeAction.durationDays;
       const realSecs = Math.max(Math.min(totalDays, 5), 1) * 1.5;
       gameDays = (delta * totalDays) / realSecs;
