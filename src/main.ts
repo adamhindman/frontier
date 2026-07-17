@@ -1243,6 +1243,11 @@ if (save?.mapPins === undefined) {
   });
 }
 
+// Direction of the first ruins quest, captured below so the capital can be
+// placed generally along the same heading (see "Capital tile" block) instead
+// of an unrelated random direction that could require backtracking.
+let firstRuinAngleRad = 0;
+
 // Compute the ruins tile — always deterministic per world seed.
 // Sprites are placed every load; pin + quest only on fresh game.
 {
@@ -1276,6 +1281,7 @@ if (save?.mapPins === undefined) {
     if (!WATER_BIOMES.has(rb)) {
       rtx = cx;
       rty = cy;
+      firstRuinAngleRad = angle;
       break;
     }
   }
@@ -1340,8 +1346,11 @@ if (save?.mapPins === undefined) {
   };
   const CAPITAL_MIN_MILES = 215;
   const CAPITAL_MAX_MILES = 285;
+  // Keep the capital within a wide cone of the ruins-chain's initial heading so
+  // the ruins quests generally lead the player toward it instead of away from it.
+  const CAPITAL_CONE_RAD = Math.PI / 3; // ±60°
   const WATER_BIOMES_CAP = new Set(["deep_water", "shallow_water"]);
-  const capAngle = capRng() * Math.PI * 2;
+  const capAngle = firstRuinAngleRad + (capRng() - 0.5) * 2 * CAPITAL_CONE_RAD;
   const capDist = (CAPITAL_MIN_MILES + capRng() * (CAPITAL_MAX_MILES - CAPITAL_MIN_MILES)) / MILES_PER_TILE;
   capitalTileX = Math.round(startTileX + Math.cos(capAngle) * capDist);
   capitalTileY = Math.round(startTileY + Math.sin(capAngle) * capDist);
@@ -1354,7 +1363,7 @@ if (save?.mapPins === undefined) {
       sampleLake(capitalTileX, capitalTileY, river),
     );
     if (!WATER_BIOMES_CAP.has(cb)) break;
-    const a = capRng() * Math.PI * 2;
+    const a = firstRuinAngleRad + (capRng() - 0.5) * 2 * CAPITAL_CONE_RAD;
     capitalTileX = Math.round(startTileX + Math.cos(a) * capDist);
     capitalTileY = Math.round(startTileY + Math.sin(a) * capDist);
   }
