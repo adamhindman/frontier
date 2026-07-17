@@ -1188,7 +1188,7 @@ if (save) {
     animals.restoreManEater(m);
   if (save.visitedLocations) visitedLocations.push(...save.visitedLocations);
   if (save.raceState?.rivalParties) {
-    rivalParties = save.raceState.rivalParties;
+    rivalParties = save.raceState.rivalParties.map(p => ({ ...p, restDaysRemaining: p.restDaysRemaining ?? 0 }));
     capitalUnlocked = save.raceState.capitalUnlocked ?? false;
   }
 }
@@ -2599,6 +2599,9 @@ function tick() {
       if (msg.startsWith('lost:')) {
         const partyName = msg.slice(5);
         activityLog.addEntry(`${partyName} has not been heard from in many weeks. Feared lost.`);
+      } else if (msg.startsWith('resting:')) {
+        const partyName = msg.slice(8);
+        activityLog.addEntry(`${partyName} is reported to have made camp — building a canoe or tending to the injured.`);
       }
     }
 
