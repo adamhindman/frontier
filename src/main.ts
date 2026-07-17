@@ -347,7 +347,7 @@ const radialMenu = createRadialMenu(
                 stats.activeAction = {
                   id: "build_deadfall",
                   label: "Setting deadfall trap",
-                  durationDays: 0.5 / 24,
+                  durationDays: 20 / 60 / 24,
                   progressDays: 0,
                 };
               },
