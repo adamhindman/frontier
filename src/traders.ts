@@ -62,7 +62,7 @@ const TRADE_ITEMS: TradeItemDef[] = [
   { key: 'hipWaders', emoji: '👖', label: 'Hip Waders',   detail: 'Wade 3 tiles from shore',   cost:  8, apply: s => { s.hipWaders++; } },
   { key: 'liquor',    emoji: '🍶', label: 'Liquor',       detail: 'Restores morale & warmth',  cost:  4, apply: s => { s.liquor++; } },
   { key: 'medicine',       emoji: '💊', label: 'Medicine',        detail: 'Restores health',                           cost:  4, apply: s => { s.medicine++; } },
-  { key: 'precisionRifle', emoji: '🎯', label: 'Precision Musket', detail: '+2 range · less wobble · less inaccuracy',   cost: 30, apply: s => { s.precisionRifle = 1; } },
+  { key: 'precisionRifle', emoji: '🎯', label: 'Precision Musket', detail: '+2 range · less wobble · less inaccuracy',   cost: 20, apply: s => { s.precisionRifle = 1; } },
   { key: 'lodestone',      emoji: '🧲', label: 'Lodestone',       detail: 'Points toward nearest nameless ruin',        cost: 20, apply: s => { s.lodestone = 1; } },
   { key: 'tools',          emoji: '🧰', label: 'Tools',           detail: 'Halves canoe and shelter build time',        cost: 12, apply: s => { s.tools = 1; } },
   { key: 'crampons',       emoji: '🥾', label: 'Crampons',        detail: '+50% speed in mountains and hills',          cost: 16, apply: s => { s.crampons = 1; } },

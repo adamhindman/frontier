@@ -1402,6 +1402,12 @@ let firstRuinAngleRad = 0;
     capitalTileX = Math.round(startTileX + Math.cos(a) * capDist);
     capitalTileY = Math.round(startTileY + Math.sin(a) * capDist);
   }
+
+  // Ruined capital: a nameless-ruins site, but 5x the footprint count and spread,
+  // reflecting the scale of a lost capital city. Placed unconditionally every load
+  // (like the nameless ruins sprites) since it's purely derived from the world seed.
+  const capitalSpriteCount = 5 * (3 + Math.floor(capRng() * 4));
+  ruinSprites.scatter(capitalTileX, capitalTileY, capitalSpriteCount, capRng, 5 * 3);
 }
 
 // --- Ruins quest chain ---

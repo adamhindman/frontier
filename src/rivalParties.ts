@@ -9,9 +9,15 @@ export interface RivalParty {
   restDaysRemaining: number;
 }
 
-// Halved testing distances: same thresholds as player quest chain
+// Cumulative straight-line miles from start needed before a party can roll to find
+// each ruin — the running sum of the player quest chain's per-leg distances
+// (~7.5, 22.5, 67.5 mi legs), NOT the raw per-leg array. Using the raw per-leg
+// values directly as cumulative thresholds let a party qualify for all 4 ruins
+// after just 67.5 total miles of wandering, instead of the ~105 miles of real
+// progress the chained legs actually add up to — that mismatch let rivals find
+// all 4 ruins in about a month regardless of how far they'd actually traveled.
 export const RIVAL_TOTAL_RUINS = 4;
-const RUIN_MILE_THRESHOLDS = [0, 7.5, 22.5, 67.5];
+const RUIN_MILE_THRESHOLDS = [7.5, 15, 37.5, 105];
 const RUIN_DAILY_PROB = 0.20;
 const LOST_DAILY_PROB = 0.002;
 const REST_DAILY_PROB = 0.05; // chance per day to halt for canoe-building/healing
