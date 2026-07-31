@@ -6,6 +6,7 @@ import type { TrapSaveEntry } from './traps';
 import type { ManEaterQuest } from './manEaterQuests';
 import type { ManEaterSave } from './animals';
 import type { RivalParty } from './rivalParties';
+import type { RobotCompanionSaveData } from './robotCompanion';
 
 export interface RaceState {
   rivalParties: RivalParty[];
@@ -26,7 +27,7 @@ export interface SaveData {
   playerTileY: number;
   startTileX: number;
   startTileY: number;
-  structures: { tileX: number; tileY: number; type: StructureType; progressDays: number; complete: boolean }[];
+  structures: { tileX: number; tileY: number; type: StructureType; progressDays: number; complete: boolean; burnProgress?: number; burnDurationDays?: number }[];
   droppedCanoes: { tileX: number; tileY: number }[];
   timberPiles: { tileX: number; tileY: number; amount: number }[];
   mapPins?: MapPin[];
@@ -36,6 +37,7 @@ export interface SaveData {
   activeManEaters?: ManEaterSave[];
   visitedLocations?: { name: string; type: string; tileX: number; tileY: number }[];
   raceState?: RaceState;
+  robotCompanion?: RobotCompanionSaveData;
 }
 
 export function saveGame(
@@ -56,12 +58,13 @@ export function saveGame(
   activeManEaters?: SaveData['activeManEaters'],
   visitedLocations?: SaveData['visitedLocations'],
   raceState?: SaveData['raceState'],
+  robotCompanion?: SaveData['robotCompanion'],
 ): void {
   const data: SaveData = {
     version: SAVE_VERSION,
     seed,
     weatherSeed,
-    stats: { ...stats, activeAction: null }, // don't restore mid-action
+    stats: { ...stats, activeAction: null, worklightOn: false }, // don't restore mid-action or mid-toggle
     playerTileX,
     playerTileY,
     startTileX,
@@ -76,6 +79,7 @@ export function saveGame(
     activeManEaters,
     visitedLocations,
     raceState,
+    robotCompanion,
   };
   try {
     localStorage.setItem(AUTO_KEY, JSON.stringify(data));
@@ -102,10 +106,21 @@ export function loadGame(): SaveData | null {
     data.stats.medicine        ??= 0;
     data.stats.precisionRifle  ??= 0;
     data.stats.lodestone       ??= 0;
+    data.stats.shriekingCoil   ??= 0;
+    data.stats.nightBoots      ??= 0;
     data.stats.tools           ??= 0;
     data.stats.crampons        ??= 0;
     data.stats.trophies        ??= [];
     data.stats.bleeding        ??= false;
+    data.stats.artifacts       ??= [];
+    data.stats.worklightLantern ??= 0;
+    data.stats.worklightOn      ??= false;
+    data.stats.hasSurveyed      ??= false;
+    data.stats.lastSurveyMiles       ??= 0;
+    data.stats.lastSurveyBearingDeg  ??= 0;
+    data.stats.lastSurveyDaysTraveled ??= data.stats.daysTraveled;
+    data.stats.wetPenalty      ??= 0;
+    data.stats.wetHoursExposure ??= 0;
     return data;
   } catch {
     return null;
@@ -134,6 +149,7 @@ export function saveManualGame(
   activeManEaters?: SaveData['activeManEaters'],
   visitedLocations?: SaveData['visitedLocations'],
   raceState?: SaveData['raceState'],
+  robotCompanion?: SaveData['robotCompanion'],
 ): void {
   const data: SaveData = {
     version: SAVE_VERSION,
@@ -154,6 +170,7 @@ export function saveManualGame(
     activeManEaters,
     visitedLocations,
     raceState,
+    robotCompanion,
   };
   try {
     localStorage.setItem(MANUAL_KEY, JSON.stringify(data));
@@ -180,9 +197,19 @@ export function loadManualGame(): SaveData | null {
     data.stats.medicine       ??= 0;
     data.stats.precisionRifle ??= 0;
     data.stats.lodestone      ??= 0;
+    data.stats.shriekingCoil  ??= 0;
+    data.stats.nightBoots     ??= 0;
     data.stats.tools          ??= 0;
     data.stats.crampons       ??= 0;
     data.stats.trophies       ??= [];
+    data.stats.bleeding       ??= false;
+    data.stats.artifacts      ??= [];
+    data.stats.hasSurveyed    ??= false;
+    data.stats.lastSurveyMiles       ??= 0;
+    data.stats.lastSurveyBearingDeg  ??= 0;
+    data.stats.lastSurveyDaysTraveled ??= data.stats.daysTraveled;
+    data.stats.wetPenalty      ??= 0;
+    data.stats.wetHoursExposure ??= 0;
     return data;
   } catch {
     return null;

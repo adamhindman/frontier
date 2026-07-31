@@ -262,6 +262,85 @@ export interface SettlementSite {
   centerTileY: number;
 }
 
+// Pure roll-and-placement check for one region cell, shared by the real discovery
+// path (_tryPlace, below) and by callers that need to know ahead of time whether a
+// settlement/village would occupy a given spot (e.g. capital placement, so it can
+// steer clear). Consumes `rng` draws identically to the original inline logic, so
+// callers that need to keep rolling for buildings/name afterward (as _tryPlace
+// does) get the exact same sequence as before this was extracted.
+function findSettlementCandidate(
+  rng: () => number,
+  type: "settlement" | "village",
+  rx: number,
+  ry: number,
+  regionSize: number,
+  startTX: number,
+  startTY: number,
+  elevNoise: NoiseFunction2D,
+  moistNoise: NoiseFunction2D,
+  riverNoise: NoiseFunction2D,
+): { tileX: number; tileY: number; tileBiome: string } | null {
+  const cx = rx * regionSize + regionSize / 2;
+  const cy = ry * regionSize + regionSize / 2;
+  let prob: number;
+  if (type === "settlement") {
+    const distMiles =
+      Math.sqrt((cx - startTX) ** 2 + (cy - startTY) ** 2) * MILES_PER_TILE;
+    prob = SETTLEMENT_BASE_PROB * Math.exp(-distMiles / SETTLEMENT_SCALE_MILES);
+  } else {
+    prob = VILLAGE_PROB;
+  }
+  if (rng() > prob) return null;
+
+  const validBiomes = type === "settlement" ? SETTLEMENT_BIOMES : VILLAGE_BIOMES;
+  for (let attempt = 0; attempt < 25; attempt++) {
+    const tx = Math.round(cx + (rng() * 2 - 1) * regionSize * 0.35);
+    const ty = Math.round(cy + (rng() * 2 - 1) * regionSize * 0.35);
+    const elev = sampleElevation(tx, ty, elevNoise);
+    const moist = sampleMoisture(tx, ty, moistNoise);
+    const riv = sampleRiver(tx, ty, riverNoise);
+    const lake = sampleLake(tx, ty, riverNoise);
+    const b = getBiome(elev, moist, riv, lake);
+    if (validBiomes.has(b)) return { tileX: tx, tileY: ty, tileBiome: b };
+  }
+  return null;
+}
+
+// True if a settlement or village would occupy a region within minDistanceTiles of
+// (tileX, tileY) — computed purely from the world seed, with no discovery/DOM
+// side effects. Used to steer the capital away from spawning on top of a town.
+export function isNearSettlementSite(
+  worldSeed: string,
+  tileX: number,
+  tileY: number,
+  startTX: number,
+  startTY: number,
+  elevNoise: NoiseFunction2D,
+  moistNoise: NoiseFunction2D,
+  riverNoise: NoiseFunction2D,
+  minDistanceTiles: number,
+): boolean {
+  for (const type of ["settlement", "village"] as const) {
+    const regionSize = type === "settlement" ? SETTLEMENT_REGION : VILLAGE_REGION;
+    const minRX = Math.floor((tileX - minDistanceTiles) / regionSize);
+    const maxRX = Math.floor((tileX + minDistanceTiles) / regionSize);
+    const minRY = Math.floor((tileY - minDistanceTiles) / regionSize);
+    const maxRY = Math.floor((tileY + minDistanceTiles) / regionSize);
+    for (let rx = minRX; rx <= maxRX; rx++) {
+      for (let ry = minRY; ry <= maxRY; ry++) {
+        const rng = makeRng(`${worldSeed}_${type}_${rx}_${ry}`);
+        const candidate = findSettlementCandidate(
+          rng, type, rx, ry, regionSize, startTX, startTY, elevNoise, moistNoise, riverNoise,
+        );
+        if (!candidate) continue;
+        const dx = candidate.tileX - tileX, dy = candidate.tileY - tileY;
+        if (Math.sqrt(dx * dx + dy * dy) <= minDistanceTiles) return true;
+      }
+    }
+  }
+  return false;
+}
+
 // ── Manager ───────────────────────────────────────────────────────────────────
 
 export class SettlementManager {
@@ -358,41 +437,12 @@ export class SettlementManager {
   ): void {
     const rng = makeRng(`${this.worldSeed}_${type}_${rx}_${ry}`);
 
-    // Distance-based probability roll
-    const cx = rx * regionSize + regionSize / 2;
-    const cy = ry * regionSize + regionSize / 2;
-    let prob: number;
-    if (type === "settlement") {
-      const distMiles =
-        Math.sqrt((cx - startTX) ** 2 + (cy - startTY) ** 2) * MILES_PER_TILE;
-      prob =
-        SETTLEMENT_BASE_PROB * Math.exp(-distMiles / SETTLEMENT_SCALE_MILES);
-    } else {
-      prob = VILLAGE_PROB;
-    }
-    if (rng() > prob) return;
-
-    // Find a valid tile within the region
-    const validBiomes =
-      type === "settlement" ? SETTLEMENT_BIOMES : VILLAGE_BIOMES;
-    let tileX: number | null = null,
-      tileY: number | null = null;
-    let tileBiome = 'forest';
-    for (let attempt = 0; attempt < 25 && tileX === null; attempt++) {
-      const tx = Math.round(cx + (rng() * 2 - 1) * regionSize * 0.35);
-      const ty = Math.round(cy + (rng() * 2 - 1) * regionSize * 0.35);
-      const elev = sampleElevation(tx, ty, this.elevNoise);
-      const moist = sampleMoisture(tx, ty, this.moistNoise);
-      const riv = sampleRiver(tx, ty, this.riverNoise);
-      const lake = sampleLake(tx, ty, this.riverNoise);
-      const b = getBiome(elev, moist, riv, lake);
-      if (validBiomes.has(b)) {
-        tileX = tx;
-        tileY = ty;
-        tileBiome = b;
-      }
-    }
-    if (tileX === null || tileY === null) return;
+    const candidate = findSettlementCandidate(
+      rng, type, rx, ry, regionSize, startTX, startTY,
+      this.elevNoise, this.moistNoise, this.riverNoise,
+    );
+    if (!candidate) return;
+    const { tileX, tileY, tileBiome } = candidate;
 
     const id = `${type}_${rx}_${ry}`;
     const name = type === "settlement" ? settlementName(rng) : villageName(rng);

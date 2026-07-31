@@ -21,6 +21,7 @@ export interface DebugState {
   speedWeather: number;
   speedMorale: number;
   speedCrampons: number;
+  speedNightBoots: number;
   speedSlope: number;
   speedNet: number;         // = effectiveSpeed (product of all above)
   tph: number;              // tiles per in-game hour
@@ -54,6 +55,20 @@ export interface DebugState {
   actionDurationH: number | null;
   // World
   seed: string;
+  // Rival expeditions
+  rivals: DebugRivalInfo[];
+}
+
+export interface DebugRivalInfo {
+  name: string;
+  status: 'active' | 'lost';
+  reachedCapital: boolean;
+  ruinsFound: number;
+  milesTraveled: number;
+  capitalDistanceMiles: number;
+  milesAtRuinsComplete?: number;
+  dayRuinsComplete?: number;
+  restDaysRemaining: number;
 }
 
 function moistureLabel(m: number) {
@@ -79,6 +94,16 @@ function divider() {
   return `<tr><td colspan="2" style="padding:2px 0 3px"><div style="border-top:1px solid #2a3a4a"></div></td></tr>`;
 }
 
+// Like row(), but stacks the value on its own line below the label instead of
+// beside it — used for the RIVALS section, where values run too long to sit
+// comfortably next to the name in this panel's fixed width.
+function stackedRow(label: string, value: string) {
+  return `<tr><td colspan="2" style="padding:0 0 6px">
+    <div style="color:#5a7a8a">${label}</div>
+    <div style="color:#c8d4e0">${value}</div>
+  </td></tr>`;
+}
+
 function section(title: string, rows: string) {
   return `<div style="margin-bottom:12px">
     <div style="color:#4a9a60;font-size:10px;letter-spacing:.09em;text-transform:uppercase;
@@ -87,7 +112,7 @@ function section(title: string, rows: string) {
   </div>`;
 }
 
-export function createDebugPanel() {
+export function createDebugPanel(onWarpToMilestone?: () => void) {
   const panel = document.createElement('div');
   panel.style.cssText = `
     position: fixed;
@@ -106,6 +131,29 @@ export function createDebugPanel() {
     box-sizing: border-box;
   `;
   document.body.appendChild(panel);
+
+  // Content is rewritten wholesale every update() call — kept in its own child
+  // so the warp button below (added once) doesn't get wiped along with it.
+  const contentEl = document.createElement('div');
+  panel.appendChild(contentEl);
+
+  const warpBtn = document.createElement('button');
+  warpBtn.textContent = 'Warp near next milestone';
+  warpBtn.style.cssText = `
+    width: 100%;
+    margin-top: 8px;
+    padding: 8px;
+    background: #1e2e3e;
+    border: 1px solid #3a5a7a;
+    border-radius: 4px;
+    color: #c8d4e0;
+    font: 11px/1.4 'Courier New', monospace;
+    cursor: pointer;
+  `;
+  warpBtn.addEventListener('mouseenter', () => { warpBtn.style.background = '#2a4a6a'; });
+  warpBtn.addEventListener('mouseleave', () => { warpBtn.style.background = '#1e2e3e'; });
+  warpBtn.addEventListener('click', () => onWarpToMilestone?.());
+  panel.appendChild(warpBtn);
 
   let visible = false;
 
@@ -137,6 +185,7 @@ export function createDebugPanel() {
       row('Weather',     `×${f(s.speedWeather)}`),
       row('Morale',      `×${f(s.speedMorale)}`),
       row('Crampons',    `×${f(s.speedCrampons)}`),
+      row('Night boots', `×${f(s.speedNightBoots)}`),
       row('Slope',       `×${f(s.speedSlope)}`),
       divider(),
       row('Net mult',    f(s.speedNet), true),
@@ -202,7 +251,28 @@ export function createDebugPanel() {
     }
     const actionRows = row('Action', actionStr);
 
-    panel.innerHTML = `
+    // Rivals section
+    const rivalRows = s.rivals.map(r => {
+      let statusStr: string;
+      if (r.status === 'lost') {
+        statusStr = 'feared lost';
+      } else if (r.reachedCapital) {
+        statusStr = 'at the capital';
+      } else if (r.ruinsFound >= 4) {
+        const progressed = r.milesTraveled - (r.milesAtRuinsComplete ?? r.milesTraveled);
+        const daysSince = typeof r.dayRuinsComplete === 'number'
+          ? Math.floor(s.daysTraveled) - r.dayRuinsComplete
+          : null;
+        statusStr = `${f(progressed, 0)} / ${f(r.capitalDistanceMiles, 0)} mi to capital`
+          + (daysSince !== null ? ` (${daysSince}d on this leg)` : '');
+      } else {
+        statusStr = `${r.ruinsFound}/4 ruins, ${f(r.milesTraveled, 0)} mi`;
+      }
+      if (r.status === 'active' && !r.reachedCapital && r.restDaysRemaining > 0) statusStr += ' (resting)';
+      return stackedRow(r.name, statusStr);
+    }).join('');
+
+    contentEl.innerHTML = `
       <div style="color:#3a8a5a;font-size:10px;letter-spacing:.12em;
                   margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid #2a3a4a">
         DEBUG · ${s.seed}
@@ -213,6 +283,7 @@ export function createDebugPanel() {
       ${section('STATS', statsRows)}
       ${section('TIME & WEATHER', timeRows)}
       ${section('ACTION', actionRows)}
+      ${section('RIVALS', rivalRows)}
     `;
   }
 

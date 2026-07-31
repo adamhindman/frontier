@@ -36,6 +36,7 @@ export class MapPinManager {
   private bubbleEls:    HTMLElement[]     = [];
   private stemEls:      HTMLElement[]     = [];
   private nameEls:      HTMLSpanElement[] = [];
+  private editIconEls:  (HTMLElement | null)[] = [];
   private editTriggers: (() => void)[]   = [];
 
   onRename: ((pinId: string, newName: string) => void) | undefined;
@@ -125,9 +126,15 @@ export class MapPinManager {
     this.bubbleEls.push(bubble);
     this.stemEls.push(stem);
     this.nameEls.push(nameSpan);
+    this.editIconEls.push(pin.fixed ? null : editIcon);
 
     // ── Inline editing ─────────────────────────────────────────────────────
     const startEdit = () => {
+      // Re-checked here (not just at listener-attachment time below) so a
+      // pin claimed later via claimPin() — e.g. a rival naming it first —
+      // can't still be edited through a click handler bound back when it
+      // wasn't fixed yet.
+      if (pin.fixed) return;
       // Prevent duplicate inputs
       if (bubble.querySelector('input')) return;
 
@@ -215,6 +222,20 @@ export class MapPinManager {
     this.pins[idx].color = color;
     this.bubbleEls[idx].style.background = color;
     this.stemEls[idx].style.background   = color;
+  }
+
+  // Names a pin and locks it against further edits — for when someone other
+  // than the player claims it first (e.g. a rival expedition reaching the
+  // capital before the player renames it). No-op if already fixed.
+  claimPin(id: string, name: string): void {
+    const idx = this.pins.findIndex(p => p.id === id);
+    if (idx < 0 || this.pins[idx].fixed) return;
+    this.pins[idx].fixed = true;
+    this.pins[idx].name = name;
+    this.nameEls[idx].textContent = name;
+    this.bubbleEls[idx].style.cursor = 'default';
+    this.editIconEls[idx]?.remove();
+    this.editIconEls[idx] = null;
   }
 
   triggerEdit(index: number): void {

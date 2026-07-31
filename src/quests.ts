@@ -46,6 +46,13 @@ export class QuestManager {
     this.quests.push(quest);
   }
 
+  // Silently drops a quest — for when its goal became moot (e.g. someone
+  // else claimed the target first) rather than actually completed. Does not
+  // fire onComplete.
+  remove(id: string): void {
+    this.quests = this.quests.filter(q => q.id !== id);
+  }
+
   // Call this whenever a game event occurs that quests might care about.
   // eventType should be a namespaced string like 'pin_renamed', 'tile_entered', etc.
   notify(eventType: string, payload: Record<string, unknown>): void {

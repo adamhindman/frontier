@@ -49,6 +49,7 @@ export function createTileInspector(
   isPaused: () => boolean = () => false,
   isHunting: () => boolean = () => false,
   getEntityAt: (tileX: number, tileY: number) => string | null = () => null,
+  isBlockedAt: (clientX: number, clientY: number) => boolean = () => false,
 ): { update: () => void } {
   // --- Tooltip ---
   const tooltip = document.createElement('div');
@@ -137,7 +138,7 @@ export function createTileInspector(
 
   // Highlight follows mouse hover.
   canvas.addEventListener('mousemove', (e) => {
-    if (isMenuOpen() || isPaused() || isHunting()) {
+    if (isMenuOpen() || isPaused() || isHunting() || isBlockedAt(e.clientX, e.clientY)) {
       hoverInBounds = false;
       highlight.visible = false;
       return;
@@ -175,7 +176,7 @@ export function createTileInspector(
 
   // Click the pinned tile to dismiss; click anywhere else to dismiss without opening a new one.
   canvas.addEventListener('click', (e) => {
-    if (isMenuOpen() || isPaused() || isHunting()) return;
+    if (isMenuOpen() || isPaused() || isHunting() || isBlockedAt(e.clientX, e.clientY)) return;
     if (!hoverInBounds) return;
 
     if (pinnedTileX === null) {

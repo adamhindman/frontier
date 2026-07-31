@@ -11,6 +11,16 @@ function getContentRect(canvas: HTMLCanvasElement) {
   return { x, y, w, h };
 }
 
+// Holding the cursor steady simulates taking careful aim: the longer it's
+// been still, the less the reticle jiggles and (see getAimSteadiness, used
+// by the fire handler in main.ts) the less inaccuracy gets baked into the
+// shot itself. Tracked off the raw (unwobbled) mouse position — using the
+// wobbled position would create a feedback loop where the wobble's own
+// motion keeps resetting the steadiness that's supposed to calm it down.
+const STEADY_MOVEMENT_THRESHOLD_PX = 4; // ignore sub-pixel mouse/hand noise
+const STEADY_SETTLE_TIME_SEC = 1.5;
+const STEADY_MIN_WOBBLE_FACTOR = 0.15; // even fully settled, some residual jiggle remains
+
 export class HuntingOverlay {
   private canvas: HTMLCanvasElement;
   private crosshair: HTMLDivElement;
@@ -24,6 +34,12 @@ export class HuntingOverlay {
   private wobbleX = 0;
   private wobbleY = 0;
   private wobblePhase = 0;
+
+  // How long (seconds) the raw cursor has been within STEADY_MOVEMENT_THRESHOLD_PX
+  // of where it was last frame — see getAimSteadiness().
+  private steadyTime = 0;
+  private prevMouseX = 0;
+  private prevMouseY = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -87,6 +103,7 @@ export class HuntingOverlay {
       this.wobbleX = 0;
       this.wobbleY = 0;
       this.wobblePhase = 0;
+      this.steadyTime = 0;
     }
   }
 
@@ -96,16 +113,42 @@ export class HuntingOverlay {
     return { x: this.mouseX, y: this.mouseY };
   }
 
+  // 0 (just started aiming, or still moving) to 1 (held steady for
+  // STEADY_SETTLE_TIME_SEC) — how "settled" the current aim is. Used both to
+  // damp the visual wobble below and, by the fire handler in main.ts, to
+  // reduce the actual angular inaccuracy applied to the shot.
+  getAimSteadiness(): number {
+    return Math.min(1, this.steadyTime / STEADY_SETTLE_TIME_SEC);
+  }
+
+  // Recoil breaks the steady aim — the player has to resettle before the
+  // next shot benefits from reduced wobble/jitter again. Call right after firing.
+  resetSteadiness() {
+    this.steadyTime = 0;
+  }
+
   /**
    * Advance wobble and reposition crosshair. Call every frame while active.
    * amplitudePx: how many screen pixels the reticle can drift at most.
    */
   update(dtSec: number, amplitudePx: number) {
     if (!this.active) return;
+
+    // Track how long the raw cursor has held still — resets the moment it
+    // moves more than a few px, builds back up while it doesn't.
+    const movedPx = Math.hypot(this.mouseX - this.prevMouseX, this.mouseY - this.prevMouseY);
+    this.steadyTime = movedPx > STEADY_MOVEMENT_THRESHOLD_PX ? 0 : this.steadyTime + dtSec;
+    this.prevMouseX = this.mouseX;
+    this.prevMouseY = this.mouseY;
+
+    const steadiness = this.getAimSteadiness();
+    const wobbleFactor = 1 - steadiness * (1 - STEADY_MIN_WOBBLE_FACTOR);
+    const effectiveAmp = amplitudePx * wobbleFactor;
+
     this.wobblePhase += dtSec;
     // Two layers per axis at incommensurate frequencies — fast and hard to track.
-    this.wobbleX = amplitudePx * (Math.sin(this.wobblePhase * 8.3 + 0.5) + 0.4 * Math.sin(this.wobblePhase * 13.7 + 1.9));
-    this.wobbleY = amplitudePx * (Math.cos(this.wobblePhase * 6.1)       + 0.4 * Math.cos(this.wobblePhase * 11.3 + 0.8));
+    this.wobbleX = effectiveAmp * (Math.sin(this.wobblePhase * 8.3 + 0.5) + 0.4 * Math.sin(this.wobblePhase * 13.7 + 1.9));
+    this.wobbleY = effectiveAmp * (Math.cos(this.wobblePhase * 6.1)       + 0.4 * Math.cos(this.wobblePhase * 11.3 + 0.8));
     this.crosshair.style.left = `${this.mouseX + this.wobbleX}px`;
     this.crosshair.style.top  = `${this.mouseY + this.wobbleY}px`;
   }

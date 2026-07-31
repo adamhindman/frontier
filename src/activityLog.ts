@@ -1,3 +1,5 @@
+import { getTopBandHeight } from './hud';
+
 export interface LogEntry {
   text: string; // e.g. "Day 3: 4.2 miles traveled"
 }
@@ -9,9 +11,7 @@ export function createActivityLog() {
   const panel = document.createElement('div');
   panel.style.cssText = `
     position: fixed;
-    top: 44px;
-    left: 50%;
-    transform: translateX(-50%);
+    right: 24px;
     width: 320px;
     max-height: 240px;
     overflow-y: auto;
@@ -55,7 +55,10 @@ export function createActivityLog() {
   function toggle() {
     open = !open;
     panel.style.display = open ? 'block' : 'none';
-    if (open) renderEntries();
+    if (open) {
+      panel.style.top = `${getTopBandHeight() + 6}px`;
+      renderEntries();
+    }
   }
 
   function close() {

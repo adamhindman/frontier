@@ -4,8 +4,16 @@ import type { ManEaterQuest } from "./manEaterQuests";
 import { questDescription, MANEATER_QUEST_EXPIRE_DAYS } from "./manEaterQuests";
 
 export interface CapitalInfo {
-  distanceMi: number;
-  bearing: string;
+  text: string; // fully formatted, e.g. "About 42 mi 130° SE of your starting camp."
+}
+
+// Strips any leftover "NNN°" degree figure from location text before display.
+// Location clue text is stored verbatim in save data (quest.description,
+// CapitalInfo.text), so saves created before degrees were hidden from these
+// readouts would otherwise still show them — this scrubs those regardless of
+// when/how the string was generated.
+function hideDegrees(text: string): string {
+  return text.replace(/\s*\d+°/g, "");
 }
 
 export function createQuestPanel(
@@ -98,7 +106,7 @@ export function createQuestPanel(
       header.append(statusDot, titleSpan);
 
       const desc = document.createElement("div");
-      desc.textContent = `~${capitalInfo.distanceMi.toFixed(0)} mi ${capitalInfo.bearing} of your starting camp.`;
+      desc.textContent = hideDegrees(capitalInfo.text);
       desc.style.cssText = "color: #7a5a30; font-size: 12px; font-style: italic; padding-left: 22px;";
 
       item.append(header, desc);
@@ -144,7 +152,7 @@ export function createQuestPanel(
       header.append(statusDot, titleSpan);
 
       const desc = document.createElement("div");
-      desc.textContent = quest.description;
+      desc.textContent = hideDegrees(quest.description);
       desc.style.cssText =
         "color: #7a5a30; font-size: 12px; font-style: italic; padding-left: 22px;";
 

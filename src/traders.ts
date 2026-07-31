@@ -58,14 +58,14 @@ const TRADE_ITEMS: TradeItemDef[] = [
   { key: 'food',      emoji: '🍖', label: 'Food',         detail: '20 lbs',                    cost:  2, apply: s => { s.food      = Math.min(FOOD_CAPACITY_LBS,  s.food  + 20); } },
   { key: 'water',     emoji: '💧', label: 'Water',        detail: '10 gal',                    cost:  2, apply: s => { s.water     = Math.min(WATER_CAPACITY_GAL, s.water + 10); } },
   { key: 'ammo',      emoji: '🔫', label: 'Ammunition',   detail: '10 rounds',                 cost:  2, apply: s => { s.rifleAmmo += 10; } },
-  { key: 'heavyCoat', emoji: '🧥', label: 'Heavy Coat',   detail: 'Feels 10°F warmer',         cost: 20, apply: s => { s.heavyCoat++; } },
+  { key: 'heavyCoat', emoji: '🧥', label: 'Heavy Coat',   detail: 'Feels 10°F warmer',         cost: 10, apply: s => { s.heavyCoat++; } },
   { key: 'hipWaders', emoji: '👖', label: 'Hip Waders',   detail: 'Wade 3 tiles from shore',   cost:  8, apply: s => { s.hipWaders++; } },
   { key: 'liquor',    emoji: '🍶', label: 'Liquor',       detail: 'Restores morale & warmth',  cost:  4, apply: s => { s.liquor++; } },
   { key: 'medicine',       emoji: '💊', label: 'Medicine',        detail: 'Restores health',                           cost:  4, apply: s => { s.medicine++; } },
-  { key: 'precisionRifle', emoji: '🎯', label: 'Precision Musket', detail: '+2 range · less wobble · less inaccuracy',   cost: 20, apply: s => { s.precisionRifle = 1; } },
-  { key: 'lodestone',      emoji: '🧲', label: 'Lodestone',       detail: 'Points toward nearest nameless ruin',        cost: 20, apply: s => { s.lodestone = 1; } },
+  { key: 'precisionRifle', emoji: '🎯', label: 'Precision Musket', detail: '+2 range · less wobble · less inaccuracy',   cost: 15, apply: s => { s.precisionRifle = 1; } },
+  { key: 'lodestone',      emoji: '🧲', label: 'Lodestone',       detail: 'Points toward nearest nameless ruin',        cost: 18, apply: s => { s.lodestone = 1; } },
   { key: 'tools',          emoji: '🧰', label: 'Tools',           detail: 'Halves canoe and shelter build time',        cost: 12, apply: s => { s.tools = 1; } },
-  { key: 'crampons',       emoji: '🥾', label: 'Crampons',        detail: '+50% speed in mountains and hills',          cost: 16, apply: s => { s.crampons = 1; } },
+  { key: 'crampons',       emoji: '🥾', label: 'Crampons',        detail: '+50% speed in mountains and hills',          cost: 5, apply: s => { s.crampons = 1; } },
 ];
 
 interface TraderInstance {
@@ -76,6 +76,8 @@ interface TraderInstance {
   mainEl:  HTMLElement;
   packEl:  HTMLElement;
   talkEl:  HTMLElement;
+  tradeBtn: HTMLButtonElement;
+  newsBtn:  HTMLButtonElement;
   stock:   TraderStock;
 }
 
@@ -135,29 +137,42 @@ export class TraderManager {
     `;
     document.body.appendChild(packEl);
 
+    // Small overhead menu (mirrors the village popup's Trade/News layout) rather
+    // than a single "click to trade" bubble, so news is reachable without
+    // having to back out of — or accidentally open — the trade dialog.
     const talkEl = document.createElement('div');
-    talkEl.textContent = 'Talk to Trader';
     talkEl.style.cssText = `
       position: fixed;
       background: rgba(14,14,14,0.92);
       border: 1px solid rgba(255,255,255,0.22);
-      border-radius: 5px;
-      color: #d0c080; font: 13px/1 monospace;
-      padding: 7px 16px;
-      cursor: pointer;
+      border-radius: 6px;
+      padding: 8px 10px;
       pointer-events: none;
       z-index: 621;
-      transform: translateX(-50%);
+      transform: translate(-50%, -100%);
       opacity: 0; transition: opacity 0.3s ease;
       white-space: nowrap; user-select: none;
+      display: flex; flex-direction: column; gap: 6px;
     `;
+    const talkBtnCss = `
+      background: rgba(160,140,80,0.10); border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 4px; color: #d0c080; font: 12px/1 monospace;
+      padding: 7px 14px; cursor: pointer; text-align: left; width: 100%;
+    `;
+    const tradeBtn = document.createElement('button');
+    tradeBtn.textContent = 'Trade with Trader';
+    tradeBtn.style.cssText = talkBtnCss;
+    const newsBtn = document.createElement('button');
+    newsBtn.textContent = 'Expedition news';
+    newsBtn.style.cssText = talkBtnCss;
+    talkEl.append(tradeBtn, newsBtn);
     document.body.appendChild(talkEl);
 
     this.traders.push({
       x, y,
       angle:    Math.random() * Math.PI * 2,
       dirTimer: DIR_HOLD_MIN + Math.random() * (DIR_HOLD_MAX - DIR_HOLD_MIN),
-      mainEl, packEl, talkEl,
+      mainEl, packEl, talkEl, tradeBtn, newsBtn,
       stock: makeStock(),
     });
   }
@@ -326,6 +341,11 @@ export class TraderManager {
   }
 
   private showNewsPopup(lines: string[]): void {
+    this.tradingPaused = true;
+    const closeNews = (overlay: HTMLElement) => {
+      overlay.remove();
+      this.tradingPaused = false;
+    };
     const overlay = document.createElement('div');
     overlay.style.cssText = `
       position: fixed; inset: 0;
@@ -366,11 +386,11 @@ export class TraderManager {
       border-radius: 4px; color: #777; font: 12px monospace;
       padding: 6px 28px; cursor: pointer; align-self: center; margin-top: 4px;
     `;
-    closeBtn.addEventListener('click', () => overlay.remove());
+    closeBtn.addEventListener('click', () => closeNews(overlay));
     panel.appendChild(closeBtn);
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeNews(overlay); });
   }
 
   openVillageMenu(villageName: string, villageId: string, stats: PlayerStats, distanceMiles = 0): void {
@@ -483,11 +503,14 @@ export class TraderManager {
         t.talkEl.style.top  = `${sy - Math.round(mainFs * 0.9)}px`;
       }
 
-      // Wire up the click exactly once per trader (idempotent — listener stays for lifetime).
+      // Wire up the clicks exactly once per trader (idempotent — listeners stay for lifetime).
       if (!(t.talkEl as any).__listenerAdded) {
         (t.talkEl as any).__listenerAdded = true;
-        t.talkEl.addEventListener('click', () => {
+        t.tradeBtn.addEventListener('click', () => {
           if (!this.tradingPaused) this.openMenu('🚶‍➡️  Trader', t.stock, stats, Math.min(3, Math.floor(distanceMiles / 150)));
+        });
+        t.newsBtn.addEventListener('click', () => {
+          if (!this.tradingPaused) this.showNews();
         });
       }
     }

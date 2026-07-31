@@ -43,7 +43,7 @@ export function createWeatherOverlay(gameCanvas: HTMLCanvasElement) {
     particleCanvas.height = window.innerHeight;
   });
 
-  const rainParticles = makeParticles(280);
+  const rainParticles = makeParticles(420);
   const snowParticles = makeParticles(200);
 
   function triggerLightningFlash() {
@@ -72,6 +72,10 @@ export function createWeatherOverlay(gameCanvas: HTMLCanvasElement) {
     const isRain     = type === 'rain' || type === 'thunderstorm';
     const isBlizzard = type === 'blizzard';
     const isFog      = type === 'fog';
+    // Heavy enough to soak the player (see the Wet condition in playerStats.ts:
+    // intensity-3 rain or any thunderstorm) — exaggerated well beyond the normal
+    // intensity scaling below so it's obvious at a glance this rain is dangerous.
+    const isSoaking  = isRain && (i === 3 || type === 'thunderstorm');
 
     if ((isBlizzard || isFog || isRain) && !inShelter) {
       let fogOpacity: number;
@@ -85,6 +89,13 @@ export function createWeatherOverlay(gameCanvas: HTMLCanvasElement) {
         fogOpacity = 0.28 + i * 0.14;
         fogColor   = '170,180,190';
         innerStop  = Math.max(12, 52 - i * 10);
+      } else if (isSoaking) {
+        // Noticeably murkier and more saturated than ordinary rain, with the
+        // dark tint pushing further toward the center — reads as oppressive
+        // rather than just a faint edge vignette.
+        fogOpacity = 0.30;
+        fogColor   = '55,85,115';
+        innerStop  = 30;
       } else {
         fogOpacity = 0.04 + i * 0.04;
         fogColor   = '90,110,130';
@@ -99,11 +110,15 @@ export function createWeatherOverlay(gameCanvas: HTMLCanvasElement) {
     ctx.clearRect(0, 0, particleCanvas.width, particleCanvas.height);
 
     if (isRain && !inShelter) {
-      const count   = 60 + i * 80;
-      const fallSpd = 0.009 + i * 0.004;
-      particleCanvas.style.opacity = String(0.28 + i * 0.18);
-      ctx.strokeStyle = 'rgba(170,205,255,0.72)';
-      ctx.lineWidth = 1;
+      // Soaking rain gets a hard exaggeration on top of the normal intensity
+      // scaling — visibly longer, faster, thicker, denser streaks and a
+      // darker, more saturated color, so it's unmistakable at a glance.
+      const count    = (60 + i * 80) + (isSoaking ? 140 : 0);
+      const fallSpd  = (0.009 + i * 0.004) * (isSoaking ? 1.6 : 1);
+      const streakLen = isSoaking ? 22 : 10;
+      particleCanvas.style.opacity = String(Math.min(1, (0.28 + i * 0.18) * (isSoaking ? 1.35 : 1)));
+      ctx.strokeStyle = isSoaking ? 'rgba(120,165,230,0.85)' : 'rgba(170,205,255,0.72)';
+      ctx.lineWidth = isSoaking ? 1.8 : 1;
       ctx.beginPath();
       for (let p = 0; p < count && p < rainParticles.length; p++) {
         const pt = rainParticles[p];
@@ -114,7 +129,7 @@ export function createWeatherOverlay(gameCanvas: HTMLCanvasElement) {
         const px = cr.x + pt.x * cr.w;
         const py = cr.y + pt.y * cr.h;
         ctx.moveTo(px, py);
-        ctx.lineTo(px + 2, py + 10);
+        ctx.lineTo(px + 2, py + streakLen);
       }
       ctx.stroke();
     } else if (isBlizzard && !inShelter) {

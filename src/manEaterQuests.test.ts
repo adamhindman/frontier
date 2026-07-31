@@ -111,6 +111,98 @@ describe('generateManEaterQuests', () => {
       expect(q.spawnMiles).toBe(expected);
     }
   });
+
+  it('generates animals appropriate to hills, mountains, desert, and swamp biomes', () => {
+    const cases: [string, string[]][] = [
+      ['hills', ['Bear', 'Wolf', 'Eagle']],
+      ['mountains', ['Bear', 'Wolf', 'Snow Leopard', 'Dragon', 'Eagle']],
+      ['desert', ['Lion']],
+      ['swamp', ['Crocodile', 'T-Rex']],
+    ];
+    for (const [biome, eligible] of cases) {
+      const eligibleSet = new Set(eligible);
+      const quests = generateManEaterQuests('v1', 'TestVille', 0, 0, biome, () => 0.5);
+      for (const q of quests) {
+        expect(eligibleSet.has(q.animalName)).toBe(true);
+      }
+    }
+  });
+});
+
+// ─── spawnBearing (16-point compass) ───────────────────────────────────────────
+
+function makeRng(sequence: number[], fallback = 0): () => number {
+  let i = 0;
+  return () => (i < sequence.length ? sequence[i++] : fallback);
+}
+
+describe('generateManEaterQuests spawnBearing', () => {
+  // Call order per quest, after the initial count roll: eligible-animal pick,
+  // man-eater-name pick, spawn angle, spawn distance. Angle 0/π/2/π along a large
+  // (40-tile) radius gives clean E/S/W directions with no floor-rounding noise.
+  const COUNT_ONE = 0.3; // Math.floor(0.3 * 4) === 1
+
+  it('bearing E for a spawn point directly east of the village (angle 0)', () => {
+    const rng = makeRng([COUNT_ONE, 0, 0, 0 /* angle=0 */, 0 /* dist=min */]);
+    const [q] = generateManEaterQuests('v1', 'TestVille', 0, 0, 'plains', rng);
+    expect(q.spawnBearing).toBe('E');
+  });
+
+  it('bearing S for a spawn point directly south of the village (angle π/2)', () => {
+    const rng = makeRng([COUNT_ONE, 0, 0, 0.25 /* angle=π/2 */, 0]);
+    const [q] = generateManEaterQuests('v1', 'TestVille', 0, 0, 'plains', rng);
+    expect(q.spawnBearing).toBe('S');
+  });
+
+  it('bearing W for a spawn point directly west of the village (angle π)', () => {
+    const rng = makeRng([COUNT_ONE, 0, 0, 0.5 /* angle=π */, 0]);
+    const [q] = generateManEaterQuests('v1', 'TestVille', 0, 0, 'plains', rng);
+    expect(q.spawnBearing).toBe('W');
+  });
+
+  it('always produces one of the 16 valid compass directions across many angles', () => {
+    const DIRS = new Set([
+      'N','NNE','NE','ENE','E','ESE','SE','SSE',
+      'S','SSW','SW','WSW','W','WNW','NW','NNW',
+    ]);
+    for (let i = 0; i < 20; i++) {
+      const angleFrac = i / 20;
+      const rng = makeRng([COUNT_ONE, 0, 0, angleFrac, 0.5]);
+      const [q] = generateManEaterQuests('v1', 'TestVille', 1000, 1000, 'forest', rng);
+      expect(DIRS.has(q.spawnBearing)).toBe(true);
+    }
+  });
+});
+
+// ─── Duplicate man-eater name avoidance ────────────────────────────────────────
+
+describe('generateManEaterQuests duplicate-name avoidance', () => {
+  const COUNT_TWO = 0.5; // Math.floor(0.5 * 4) === 2
+
+  it('retries once and picks a different name when the first roll collides', () => {
+    // quest0: name index 0 ('One Eye'). quest1: initial roll also index 0 (collides),
+    // first retry attempt rolls index 1 ('Scarback'), which is unused -> accepted.
+    const rng = makeRng([
+      COUNT_TWO,
+      0, 0, 0, 0,          // quest0: eligible, name(=0 'One Eye'), angle, dist
+      0, 0, 0.02, 0, 0,    // quest1: eligible, name(=0 collide), retry(=1 'Scarback'), angle, dist
+    ]);
+    const quests = generateManEaterQuests('v1', 'TestVille', 0, 0, 'forest', rng);
+    expect(quests).toHaveLength(2);
+    expect(quests[0].manEaterName).toBe('One Eye');
+    expect(quests[1].manEaterName).toBe('Scarback');
+    expect(quests[1].manEaterName).not.toBe(quests[0].manEaterName);
+  });
+
+  it('falls back to a duplicate name when all 8 retry attempts also collide', () => {
+    // Every roll (initial + all 8 retries) resolves to index 0 ('One Eye') for both
+    // quests, so quest1 can never find a free name and keeps the colliding one.
+    const rng = makeRng([COUNT_TWO], 0);
+    const quests = generateManEaterQuests('v1', 'TestVille', 0, 0, 'forest', rng);
+    expect(quests).toHaveLength(2);
+    expect(quests[0].manEaterName).toBe('One Eye');
+    expect(quests[1].manEaterName).toBe('One Eye');
+  });
 });
 
 // ─── questDescription ─────────────────────────────────────────────────────────

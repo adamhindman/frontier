@@ -61,7 +61,7 @@ Unique items found only in ancient ruins. Each ruin yields exactly one.
 
 | Item | Effect |
 |---|---|
-| **Bone Whistle** | Predators won't enter stalking mode unless you come within 3 tiles of them. Man-eaters ignore it. |
+| **Shrieking Coil** | Click to send every aggressive creature within 10 tiles fleeing out to 15 — man-eaters included. A coiled band of an unknown metal; it makes no sound you can hear. |
 | **Astrolabe** | Survey range increased by 50%. |
 | **Thermal Membrane** | Warmth never drops below Chilled (40), regardless of weather or biome. A paper-thin material with no apparent structure. |
 | **Spoilage Ward** | A clay tablet with inscriptions that halves food spoilage. You don't know how it works. |
@@ -71,7 +71,7 @@ Unique items found only in ancient ruins. Each ruin yields exactly one.
 | **Resonance Fork** | Foraging for water yields double. A tuning fork that vibrates near underground sources. |
 | **Burden Belt** | Eliminates the carry-weight speed penalty entirely. Made of a material lighter than silk that somehow distributes load. |
 | **Petrified Heart** | Health regenerates even when energy is at zero. Carved from something that pulses faintly in the dark. |
-| **Night Boots** | Travel speed doubled at night. Strange material that seems to grip the dark. |
+| **Night Boots** | +50% travel speed at night while on foot (no effect in a canoe). Strange material that seems to grip the dark. |
 | **Seeking Cartridge** | Rifle shots track the nearest animal in the target tile — eliminates wobble and angular jitter entirely. A mechanism you can't explain. |
 | **Portable Bridge** | Cross one tile of deep water on foot without a canoe. Folds to the size of a book. |
 | **Robot Companion** | Automatically forages once per in-game hour while you rest. You have no idea what it runs on. |

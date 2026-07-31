@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeAmbientTemp, canWadeShallowWater } from './worldQueries';
+import { computeAmbientTemp, canWadeShallowWater, compassLabel, formatApproxLocation, formatApproxLocationCompact, formatElapsedGameTime } from './worldQueries';
 
 // ─── computeAmbientTemp ───────────────────────────────────────────────────────
 
@@ -100,5 +100,112 @@ describe('canWadeShallowWater', () => {
     // The callback returns false only for (0,0) — if center were checked, it would return true
     const isWater = (ddx: number, ddy: number) => !(ddx === 0 && ddy === 0);
     expect(canWadeShallowWater(1, isWater)).toBe(false);
+  });
+});
+
+// ─── compassLabel ────────────────────────────────────────────────────────────
+
+describe('compassLabel', () => {
+  it('maps the 16 exact compass points', () => {
+    const expected = [
+      'N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
+      'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW',
+    ];
+    expected.forEach((label, i) => {
+      expect(compassLabel(i * 22.5)).toBe(label);
+    });
+  });
+
+  it('rounds to the nearest compass point', () => {
+    expect(compassLabel(10)).toBe('N');
+    expect(compassLabel(12)).toBe('NNE');
+  });
+
+  it('wraps negative degrees into range', () => {
+    expect(compassLabel(-10)).toBe('N');
+  });
+
+  it('wraps degrees greater than 360 into range', () => {
+    expect(compassLabel(370)).toBe('N');
+  });
+
+  it('wraps a value that rounds up to 360 back to N', () => {
+    expect(compassLabel(359)).toBe('N');
+  });
+});
+
+// ─── formatApproxLocation ────────────────────────────────────────────────────
+
+describe('formatApproxLocation', () => {
+  it('formats miles and compass direction, with degrees hidden', () => {
+    // 94.7 -> 95 mi; 16 -> nearest 5 is 15 -> NNE
+    expect(formatApproxLocation(94.7, 16)).toBe('About 95 mi NNE');
+  });
+
+  it('rounds miles to the nearest whole number', () => {
+    expect(formatApproxLocation(12.4, 0)).toBe('About 12 mi N');
+    expect(formatApproxLocation(12.5, 0)).toBe('About 13 mi N');
+  });
+
+  it('wraps a bearing that rounds up to 360 back to N', () => {
+    expect(formatApproxLocation(10, 358)).toBe('About 10 mi N');
+  });
+
+  it('normalizes negative bearings', () => {
+    expect(formatApproxLocation(10, -5)).toBe('About 10 mi N');
+  });
+
+  it('handles zero miles', () => {
+    expect(formatApproxLocation(0, 90)).toBe('About 0 mi E');
+  });
+});
+
+// ─── formatApproxLocationCompact ─────────────────────────────────────────────
+
+describe('formatApproxLocationCompact', () => {
+  it('formats direction with degrees hidden', () => {
+    expect(formatApproxLocationCompact(2.6, 34)).toBe('About 3 mi NE');
+  });
+
+  it('rounds miles to the nearest whole number', () => {
+    expect(formatApproxLocationCompact(12.4, 0)).toBe('About 12 mi N');
+    expect(formatApproxLocationCompact(12.5, 0)).toBe('About 13 mi N');
+  });
+
+  it('wraps a bearing that rounds up to 360 back to N', () => {
+    expect(formatApproxLocationCompact(10, 358)).toBe('About 10 mi N');
+  });
+
+  it('normalizes negative bearings', () => {
+    expect(formatApproxLocationCompact(10, -5)).toBe('About 10 mi N');
+  });
+});
+
+// ─── formatElapsedGameTime ───────────────────────────────────────────────────
+
+describe('formatElapsedGameTime', () => {
+  it('reads as "moments ago" under half an hour', () => {
+    expect(formatElapsedGameTime(0)).toBe('moments ago');
+    expect(formatElapsedGameTime(0.2 / 24)).toBe('moments ago');
+  });
+
+  it('formats singular vs plural hours', () => {
+    expect(formatElapsedGameTime(1 / 24)).toBe('1 hour');
+    expect(formatElapsedGameTime(2 / 24)).toBe('2 hours');
+  });
+
+  it('rounds hours to the nearest whole hour', () => {
+    expect(formatElapsedGameTime(1.4 / 24)).toBe('1 hour');
+    expect(formatElapsedGameTime(1.6 / 24)).toBe('2 hours');
+  });
+
+  it('switches to days at 24 hours', () => {
+    expect(formatElapsedGameTime(1)).toBe('1 day');
+    expect(formatElapsedGameTime(2)).toBe('2 days');
+  });
+
+  it('rounds days to the nearest whole day', () => {
+    expect(formatElapsedGameTime(1.4)).toBe('1 day');
+    expect(formatElapsedGameTime(1.6)).toBe('2 days');
   });
 });

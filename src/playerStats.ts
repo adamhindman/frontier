@@ -1,5 +1,5 @@
 import type { BiomeProperties } from "./biomes";
-import type { WeatherEffects } from "./weather";
+import type { WeatherEffects, WeatherEvent } from "./weather";
 export type { WeatherEffects } from "./weather";
 
 export interface StatusCondition {
@@ -26,6 +26,8 @@ export interface ActiveAction {
   buildTileY?: number;
   energyMultiplier?: number; // multiplier on energy gain/drain for this action (default 1)
   sheltered?: boolean;       // treat as inside a shelter (warmth protection, shelter rest bonus)
+  campfireBurnHours?: number;      // build_campfire only: how long the fire stays lit once complete
+  sleepingInTent?: boolean; // rest only: player sprite swaps to a tent + time passes 25% slower (see beginRest)
 }
 
 export interface PlayerStats {
@@ -56,10 +58,21 @@ export interface PlayerStats {
   medicine: number;       // consumable count; restores health on use
   precisionRifle: number; // 1 when owned; increases range +2, wobble ×0.75, jitter ×0.5
   lodestone: number;      // 1 when owned; click to get bearing to nearest nameless ruin
+  shriekingCoil: number;  // 1 when owned; click to scare aggressive creatures within range
+  nightBoots: number;     // 1 when owned; +50% travel speed at night
   tools: number;          // 1 when owned; halves canoe and shelter build time
   crampons: number;       // 1 when owned; +50% speed in mountains and hills
   trophies: Trophy[];     // man-eater kills ready to claim as quest rewards
   bleeding: boolean;     // true after an animal attack; drains 5 hp/hour until treated
+  artifacts: string[];   // ids of ruin artifacts found (see artifacts.ts); one per ruin, no duplicates
+  worklightLantern: number; // 1 when owned; toggle lets you build/harvest/survey/track at night
+  worklightOn: boolean;     // current toggle state; false on load regardless of saved value
+  hasSurveyed: boolean;     // true once the player has entered survey mode at least once
+  lastSurveyMiles: number;      // distance from start at the moment of the last survey
+  lastSurveyBearingDeg: number; // bearing from start (0=N) at the moment of the last survey
+  lastSurveyDaysTraveled: number; // stats.daysTraveled at the moment of the last survey
+  wetPenalty: number;      // 0 when dry; else degrees subtracted from perceived ambient temp (10, or 20 in a blizzard)
+  wetHoursExposure: number; // consecutive hours walking in heavy rain/thunderstorm; resets when exposure stops
 }
 
 export const SECONDS_PER_DAY    = 120;
@@ -97,7 +110,7 @@ const BACKGROUND_WATER_DRAIN_PER_DAY = 0.5;  // gal/day
 const SPOILAGE_RATE_PER_DAY = 0.10; // 10% of current stock per day
 const SPOILAGE_MIN_PER_DAY  = 1.0;  // floor: always lose at least this much if food > 0
 
-const REST_FOOD_DRAIN_PER_DAY   = 3.4;  // lbs/day (on top of background → ~4.3 total)
+const REST_FOOD_DRAIN_PER_DAY   = 0.85; // lbs/day (on top of background → ~1.75 total); reduced 75% from 3.4
 const REST_WATER_DRAIN_PER_DAY  = 1.0;  // gal/day (on top of background → ~1.5 total)
 const REST_ENERGY_GAIN_PER_DAY  = 75;
 
@@ -191,10 +204,21 @@ export function createStats(): PlayerStats {
     medicine: 0,
     precisionRifle: 0,
     lodestone: 0,
+    shriekingCoil: 0,
+    nightBoots: 0,
     tools: 0,
     crampons: 0,
     trophies: [],
     bleeding: false,
+    artifacts: [],
+    worklightLantern: 0,
+    worklightOn: false,
+    hasSurveyed: false,
+    lastSurveyMiles: 0,
+    lastSurveyBearingDeg: 0,
+    lastSurveyDaysTraveled: 0,
+    wetPenalty: 0,
+    wetHoursExposure: 0,
   };
 }
 
@@ -208,7 +232,17 @@ export function getWeightMultiplier(stats: PlayerStats): number {
 const WARMTH_DRAIN_PER_DAY_MAX    = 450;
 const WARMTH_RESTORE_PER_DAY_MAX  = 60;
 const WARMTH_COMFORT_F            = 65;
-const WARMTH_HEALTH_DRAIN_PER_DAY = 800;
+const WARMTH_HEALTH_DRAIN_PER_DAY = 400;
+
+// --- Wet condition ---
+// Gained by walking 2+ hours in heavy rain (intensity 3) or a thunderstorm, or
+// by standing in water without hip waders/a canoe. Subtracts from perceived
+// ambient temperature (not the air itself — you just feel colder).
+const WET_WALK_EXPOSURE_HOURS = 2;
+const WET_PENALTY_DEFAULT  = 10; // °F, normal wet penalty
+const WET_PENALTY_BLIZZARD = 20; // °F, pinned while a blizzard is active and you're wet
+const WET_DRY_DECAY_PER_HOUR_F = 2.5; // dry weather: gradual, ~4 hours from 10
+const WET_FIRE_DRY_HOURS = 1; // campfire/shelter: full dry from the worst case (20) in ~1 hour, regardless of outside weather
 
 export function updateStats(
   stats: PlayerStats,
@@ -221,6 +255,8 @@ export function updateStats(
   warming: 'campfire' | 'shelter' | false = false,
   weatherEffects?: WeatherEffects,
   portaging = false,
+  resolvedWeather?: WeatherEvent,
+  unprotectedInWater = false,
 ): { timeTicking: boolean; forageEvents: ForageEvent[] } {
   // Hard guard: if the game is paused (delta=0) and the player isn't moving,
   // skip all stat mutations entirely. Belt-and-suspenders on top of effectiveDelta=0.
@@ -273,6 +309,9 @@ export function updateStats(
       const totalDays = stats.activeAction.durationDays;
       const realSecs = Math.max(Math.min(totalDays, 5), 1) * 1.5;
       gameDays = (delta * totalDays) / realSecs;
+      // Sleeping in the tent (post-campfire "Rest Until Dawn") passes time
+      // 25% slower than a normal rest — a cozier, less rushed night.
+      if (stats.activeAction.sleepingInTent) gameDays *= 0.75;
     } else if (stats.activeAction?.id === 'build_canoe') {
       gameDays *= 4;
     }
@@ -292,11 +331,50 @@ export function updateStats(
       stats.foodSpoiled += before - stats.food;
     }
 
+    // Wet condition: gained from heavy rain/thunderstorm exposure while
+    // walking, or from standing in water unprotected; makes the world feel
+    // colder than it is (see effectiveAmbientTempF below) until it dries off.
+    {
+      const isHeavyRainOrStorm =
+        !!resolvedWeather &&
+        ((resolvedWeather.type === 'rain' && resolvedWeather.intensity === 3) ||
+          resolvedWeather.type === 'thunderstorm');
+      if (isMoving && isHeavyRainOrStorm) {
+        stats.wetHoursExposure += gameDays * 24;
+        if (stats.wetHoursExposure >= WET_WALK_EXPOSURE_HOURS) {
+          stats.wetPenalty = Math.max(stats.wetPenalty, WET_PENALTY_DEFAULT);
+        }
+      } else {
+        stats.wetHoursExposure = 0;
+      }
+      if (unprotectedInWater) {
+        stats.wetPenalty = Math.max(stats.wetPenalty, WET_PENALTY_DEFAULT);
+      }
+      if (stats.wetPenalty > 0) {
+        const isBlizzard = resolvedWeather?.type === 'blizzard';
+        const isRaining =
+          !!resolvedWeather && (resolvedWeather.type === 'rain' || resolvedWeather.type === 'thunderstorm');
+        if (warming === 'campfire' || warming === 'shelter') {
+          // Fire/shelter dries you out regardless of what's happening outside.
+          stats.wetPenalty = Math.max(0, stats.wetPenalty - gameDays * 24 * (WET_PENALTY_BLIZZARD / WET_FIRE_DRY_HOURS));
+        } else if (isBlizzard) {
+          // Can't dry off in a blizzard — and it re-soaks you to the worst level.
+          stats.wetPenalty = WET_PENALTY_BLIZZARD;
+        } else if (isRaining) {
+          // Can't dry off in the rain either — frozen at the current penalty.
+        } else {
+          stats.wetPenalty = Math.max(0, stats.wetPenalty - gameDays * 24 * WET_DRY_DECAY_PER_HOUR_F);
+        }
+      }
+    }
+    // Not the air itself changing — you just experience it as colder while wet.
+    const effectiveAmbientTempF = ambientTempF - stats.wetPenalty;
+
     // Warmth changes only while the clock is ticking.
     if (warming === 'campfire') {
       // Fire adds warmth but cold air and weather still drain — severe cold/blizzard overwhelms a campfire
-      const coldFactor = ambientTempF < WARMTH_COMFORT_F
-        ? (WARMTH_COMFORT_F - ambientTempF) / WARMTH_COMFORT_F
+      const coldFactor = effectiveAmbientTempF < WARMTH_COMFORT_F
+        ? (WARMTH_COMFORT_F - effectiveAmbientTempF) / WARMTH_COMFORT_F
         : 0;
       const drain = gameDays * coldFactor * WARMTH_DRAIN_PER_DAY_MAX * (weatherEffects?.warmthDrainMult ?? 1);
       const gain  = gameDays * WARMTH_RESTORE_PER_DAY_MAX * 10; // campfire provides strong boost
@@ -305,19 +383,20 @@ export function updateStats(
     } else if (warming === 'shelter') {
       // Shelter blocks all outside cold and warms you instantly — snap straight into the Warm range.
       stats.warmth = Math.min(82, Math.max(81, stats.warmth + gameDays * WARMTH_RESTORE_PER_DAY_MAX * 4));
-    } else if (ambientTempF < WARMTH_COMFORT_F) {
-      const coldFactor = (WARMTH_COMFORT_F - ambientTempF) / WARMTH_COMFORT_F;
+    } else if (effectiveAmbientTempF < WARMTH_COMFORT_F) {
+      const coldFactor = (WARMTH_COMFORT_F - effectiveAmbientTempF) / WARMTH_COMFORT_F;
       const drainMult  = weatherEffects?.warmthDrainMult ?? 1;
       stats.warmth = Math.max(0, stats.warmth - gameDays * coldFactor * WARMTH_DRAIN_PER_DAY_MAX * drainMult);
     } else {
-      const warmFactor = Math.min(1, (ambientTempF - WARMTH_COMFORT_F) / 35);
+      const warmFactor = Math.min(1, (effectiveAmbientTempF - WARMTH_COMFORT_F) / 35);
       stats.warmth = Math.min(100, stats.warmth + gameDays * warmFactor * WARMTH_RESTORE_PER_DAY_MAX);
     }
     // Shelter protects from cold health drain — warmth recovers at its own pace inside.
-    if (stats.warmth < 50 && warming !== 'shelter') {
-      const coldSeverity = (50 - stats.warmth) / 50;
-      stats.health = Math.max(0, stats.health - gameDays * coldSeverity * WARMTH_HEALTH_DRAIN_PER_DAY);
-    }
+    // (Health drain itself is applied below, combined with hunger/thirst.)
+    const coldHealthDrainRate =
+      stats.warmth < 50 && warming !== 'shelter'
+        ? ((50 - stats.warmth) / 50) * WARMTH_HEALTH_DRAIN_PER_DAY
+        : 0;
 
     stats.daysTraveled += gameDays;
 
@@ -345,17 +424,14 @@ export function updateStats(
     if (warming !== 'shelter') moraleDrainPerDay += weatherEffects?.moraleDrainPerDay ?? 0;
     stats.morale = Math.max(0, stats.morale - gameDays * moraleDrainPerDay);
 
-    // Health drains when any critical stat is depleted
-    if (stats.food <= 0)
-      stats.health = Math.max(
-        0,
-        stats.health - gameDays * HEALTH_DRAIN_NO_FOOD_PER_DAY,
-      );
-    if (stats.water <= 0)
-      stats.health = Math.max(
-        0,
-        stats.health - gameDays * HEALTH_DRAIN_NO_WATER_PER_DAY,
-      );
+    // Cold, hunger, and thirst are all "environmental" health threats — being
+    // simultaneously freezing, starving, and dehydrated shouldn't kill 3x
+    // faster than any one alone, so take the worst of the three rather than
+    // summing them. Morale/energy/bleeding are separate, additive drains.
+    const foodHealthDrainRate  = stats.food  <= 0 ? HEALTH_DRAIN_NO_FOOD_PER_DAY  : 0;
+    const waterHealthDrainRate = stats.water <= 0 ? HEALTH_DRAIN_NO_WATER_PER_DAY : 0;
+    const environmentalHealthDrainRate = Math.max(coldHealthDrainRate, foodHealthDrainRate, waterHealthDrainRate);
+    stats.health = Math.max(0, stats.health - gameDays * environmentalHealthDrainRate);
     if (stats.morale <= 0)
       stats.health = Math.max(
         0,
@@ -444,7 +520,7 @@ export function updateStats(
           }
         }
       } else if (stats.activeAction.id === 'build_canoe' || stats.activeAction.id === 'build_shelter') {
-        if (!isDaylight(stats.daysTraveled)) {
+        if (!isDaylight(stats.daysTraveled) && !stats.worklightOn) {
           stats.activeAction = null;
         } else {
           { const f = stats.food, w = stats.water;
@@ -467,7 +543,7 @@ export function updateStats(
           stats.activeAction = null;
         }
       } else if (stats.activeAction.id === 'build_deadfall') {
-        if (!isDaylight(stats.daysTraveled)) {
+        if (!isDaylight(stats.daysTraveled) && !stats.worklightOn) {
           stats.activeAction = null;
         } else {
           { const f = stats.food, w = stats.water;
@@ -480,7 +556,7 @@ export function updateStats(
           }
         }
       } else if (stats.activeAction.id === 'track_maneater') {
-        if (!isDaylight(stats.daysTraveled)) {
+        if (!isDaylight(stats.daysTraveled) && !stats.worklightOn) {
           stats.activeAction = null;
         } else {
           { const f = stats.food, w = stats.water;

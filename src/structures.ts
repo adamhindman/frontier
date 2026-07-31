@@ -15,15 +15,16 @@ interface StructureConfig {
 export const CANOE_TIMBER_COST     = 10;
 export const SHELTER_TIMBER_COST   = 8;
 export const CAMPFIRE_TIMBER_COST  = 0;
+// Fallback burn duration (days) for a complete campfire restored from a save
+// predating timed burnout — treated as a fresh, short-lived fire rather than
+// one that burns forever (matches the manual "Campfire" action's 4 hours).
+const CAMPFIRE_MANUAL_BURN_HOURS_FALLBACK = 4 / 24;
 
 export const STRUCTURE_CONFIGS: Record<StructureType, StructureConfig> = {
   canoe:    { emoji: '🛶', totalHours: 24, label: 'Canoe',     timberCost: CANOE_TIMBER_COST    },
   shelter:  { emoji: '🛖', totalHours: 3,  label: 'Shelter',   timberCost: SHELTER_TIMBER_COST  },
   campfire: { emoji: '🔥', totalHours: 1,  label: 'Campfire',  timberCost: CAMPFIRE_TIMBER_COST },
 };
-
-// Campfire burns 1 timber unit per this many game-days.
-const CAMPFIRE_BURN_INTERVAL_DAYS = 2 / 24;
 
 interface PlacedStructure {
   tileX: number;
@@ -32,6 +33,7 @@ interface PlacedStructure {
   complete: boolean;
   progressDays: number;
   burnProgress: number; // game-days elapsed since campfire was lit (not persisted)
+  burnDurationDays?: number; // campfire only: total lifetime once lit (not persisted)
   el: HTMLElement;
   tooltipEl: HTMLDivElement;
 }
@@ -150,7 +152,9 @@ export class StructureManager {
       el = img;
     } else {
       const div = document.createElement('div');
-      div.textContent = cfg.emoji;
+      // Campfire stays invisible until lit — no flame to show while it's
+      // still being built (see complete()).
+      div.textContent = type === 'campfire' ? '' : cfg.emoji;
       div.style.cssText = `
         position: fixed;
         font-size: 22px;
@@ -220,7 +224,9 @@ export class StructureManager {
     return s ? { tileX: s.tileX, tileY: s.tileY } : null;
   }
 
-  complete(index: number, stats: PlayerStats) {
+  // burnDurationDays is campfire-only: how long it stays lit once complete
+  // (see startCampfireBuild in main.ts — no more timber-pile fuel involved).
+  complete(index: number, stats: PlayerStats, burnDurationDays?: number) {
     const s = this.slots[index];
     if (!s) return;
     s.complete = true;
@@ -231,25 +237,25 @@ export class StructureManager {
       this.slots[index] = null;
     } else {
       s.tooltipEl.textContent = `${STRUCTURE_CONFIGS[s.type].label}\nComplete`;
-      if (s.type === 'campfire') s.el.style.fontSize = '26px'; // slightly larger when lit
+      if (s.type === 'campfire') {
+        s.el.textContent = STRUCTURE_CONFIGS.campfire.emoji; // now lit — reveal the flame
+        s.el.style.fontSize = '26px'; // slightly larger when lit
+        s.burnDurationDays = burnDurationDays;
+      }
     }
   }
 
-  // Advance campfire burn timers by gameDays. Returns entries for each campfire that
-  // crossed a burn interval and needs fuel consumed by the caller.
-  // fuelNeeded is the integer number of timber units required this tick.
-  tickCampfires(gameDays: number): { index: number; tileX: number; tileY: number; fuelNeeded: number }[] {
-    const results: { index: number; tileX: number; tileY: number; fuelNeeded: number }[] = [];
+  // Advance campfire burn timers by gameDays. Returns the index of each
+  // campfire whose fixed lifetime has elapsed — the caller should burnOut() it.
+  tickCampfires(gameDays: number): number[] {
+    const burnedOut: number[] = [];
     for (let i = 0; i < this.slots.length; i++) {
       const s = this.slots[i];
-      if (!s || !s.complete || s.type !== 'campfire') continue;
-      const ticksBefore = Math.floor(s.burnProgress / CAMPFIRE_BURN_INTERVAL_DAYS);
+      if (!s || !s.complete || s.type !== 'campfire' || s.burnDurationDays === undefined) continue;
       s.burnProgress += gameDays;
-      const ticksNow = Math.floor(s.burnProgress / CAMPFIRE_BURN_INTERVAL_DAYS);
-      const fuelNeeded = ticksNow - ticksBefore;
-      if (fuelNeeded > 0) results.push({ index: i, tileX: s.tileX, tileY: s.tileY, fuelNeeded });
+      if (s.burnProgress >= s.burnDurationDays) burnedOut.push(i);
     }
-    return results;
+    return burnedOut;
   }
 
   // Extinguish a complete campfire exactly at (tileX, tileY), if one exists.
@@ -294,18 +300,36 @@ export class StructureManager {
     return false;
   }
 
-  getSaveData(): { tileX: number; tileY: number; type: StructureType; progressDays: number; complete: boolean }[] {
+  getSaveData(): { tileX: number; tileY: number; type: StructureType; progressDays: number; complete: boolean; burnProgress?: number; burnDurationDays?: number }[] {
     return this.slots
       .filter((s): s is PlacedStructure => s !== null && !(s.type === 'canoe' && s.complete))
-      .map(s => ({ tileX: s.tileX, tileY: s.tileY, type: s.type, progressDays: s.progressDays, complete: s.complete }));
+      .map(s => ({
+        tileX: s.tileX, tileY: s.tileY, type: s.type, progressDays: s.progressDays, complete: s.complete,
+        // Only meaningful for a lit campfire — round-tripping these is what
+        // lets a save/reload preserve how much longer it has left to burn.
+        ...(s.type === 'campfire' && s.complete
+          ? { burnProgress: s.burnProgress, burnDurationDays: s.burnDurationDays }
+          : {}),
+      }));
   }
 
-  restore(tileX: number, tileY: number, type: StructureType, progressDays: number, complete: boolean): number {
+  restore(
+    tileX: number, tileY: number, type: StructureType, progressDays: number, complete: boolean,
+    burnProgress?: number, burnDurationDays?: number,
+  ): number {
     const idx = this.add(tileX, tileY, type);
     if (complete) {
       const s = this.slots[idx]!;
       s.complete = true;
       s.tooltipEl.textContent = `${STRUCTURE_CONFIGS[type].label}\nComplete`;
+      if (type === 'campfire') {
+        s.el.textContent = STRUCTURE_CONFIGS.campfire.emoji; // restored already lit — reveal the flame
+        s.el.style.fontSize = '26px';
+        // Old saves predating timed burnout won't have these — treat as a
+        // fresh, short-lived fire rather than one that burns forever.
+        s.burnProgress = burnProgress ?? 0;
+        s.burnDurationDays = burnDurationDays ?? CAMPFIRE_MANUAL_BURN_HOURS_FALLBACK;
+      }
     } else {
       this.setProgress(idx, progressDays);
     }

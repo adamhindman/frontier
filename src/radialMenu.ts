@@ -7,6 +7,10 @@ export interface RadialItem {
   action?: () => void;
   children?: RadialItem[];
   disabled?: boolean;
+  // Overrides the auto-assigned number badge with a fixed letter key (e.g.
+  // "A"). Excluded from the numeric badge count so it doesn't shift other
+  // items' numbers.
+  hotkey?: string;
 }
 
 const COL_W      = 210;
@@ -148,8 +152,10 @@ export function createRadialMenu(
       if (!isBack) {
         // Badge assigned to every non-Back item (including disabled) so the
         // number is consistent regardless of which items are currently enabled.
+        // Items with a fixed hotkey show that letter instead and are skipped
+        // when counting, so they don't shift everyone else's number.
         const badge = document.createElement("span");
-        badge.textContent = String(++badgeCounter);
+        badge.textContent = item.hotkey ?? String(++badgeCounter);
         badge.style.cssText = `
           display: inline-flex;
           align-items: center;
@@ -315,15 +321,23 @@ export function createRadialMenu(
       return;
     }
 
+    const rows = getRows();
+    const hotkeyIdx = renderedItems.findIndex(
+      item => item.label !== '← Back' && item.hotkey?.toLowerCase() === e.key.toLowerCase(),
+    );
+    if (hotkeyIdx >= 0) {
+      if (!renderedItems[hotkeyIdx].disabled) { e.preventDefault(); rows[hotkeyIdx]?.click(); }
+      return;
+    }
+
     const num = parseInt(e.key, 10);
     if (!isNaN(num) && num >= 1) {
-      // Walk non-Back items by position (matching badge assignment).
-      // Skip only the Back item when counting; disabled items keep their slot
-      // but the key press is ignored when that slot is disabled.
-      const rows = getRows();
+      // Walk non-Back, non-hotkey items by position (matching badge assignment).
+      // Disabled items keep their slot but the key press is ignored when that
+      // slot is disabled.
       let count = 0;
       for (let i = 0; i < renderedItems.length; i++) {
-        if (renderedItems[i].label === '← Back') continue;
+        if (renderedItems[i].label === '← Back' || renderedItems[i].hotkey) continue;
         if (++count === num) {
           if (!renderedItems[i].disabled) { e.preventDefault(); rows[i]?.click(); }
           break;
@@ -334,5 +348,37 @@ export function createRadialMenu(
 
   window.addEventListener("blur", closeAll);
 
-  return { isOpen, closeAll, openAtTile };
+  // Fires a top-level item's action directly by its hotkey letter or number
+  // badge, without the menu having been opened at all — same matching rules
+  // as the keydown listener above (letter hotkeys first, then numeric badges
+  // skipping Back/hotkeyed items), just evaluated against a fresh getItems()
+  // call instead of the currently-rendered (possibly nested) nested items.
+  // Only ever looks at the root level — a submenu's items aren't reachable
+  // this way, only whatever's on screen when the menu is first opened.
+  function activateHotkey(tileX: number, tileY: number, key: string): boolean {
+    if (isOpen()) return false;
+    const items = getItems(tileX, tileY);
+    const hotkeyIdx = items.findIndex(item => item.hotkey?.toLowerCase() === key.toLowerCase());
+    if (hotkeyIdx >= 0) {
+      const item = items[hotkeyIdx];
+      if (item.disabled || !item.action) return false;
+      item.action();
+      return true;
+    }
+    const num = parseInt(key, 10);
+    if (!isNaN(num) && num >= 1) {
+      let count = 0;
+      for (const item of items) {
+        if (item.hotkey) continue;
+        if (++count === num) {
+          if (item.disabled || !item.action) return false;
+          item.action();
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  return { isOpen, closeAll, openAtTile, activateHotkey };
 }

@@ -22,6 +22,7 @@ interface AnimalDef {
   size: number;         // emoji font-size in px (base 18 = medium)
   hp: number;
   prey: boolean;        // true = flees from gunshots; false = holds ground
+  weight?: number;      // overrides RARITY_WEIGHT[rarity] for spawn odds when set
   nocturnal?: boolean;
   detectionRadius?: number; // predators: tiles at which they detect and stalk player
   attackDamage?: number;    // damage per hit when they reach the player
@@ -35,8 +36,27 @@ const RETREAT_TILES   = 8;     // how far back to retreat after striking
 const RETREAT_PAUSE   = 3.5;   // seconds of retreat-pause before re-stalking
 const RUSH_SPEED_MULT = 3.0;   // speed multiplier during rush
 const NAMEPLATE_RANGE = 10;    // tiles — man-eater nameplate visible within this distance
+const FLEE_SPEED_MULT = 2.0;   // speed multiplier while fleeing the Shrieking Coil
 
-type PredatorState = 'idle' | 'stalking' | 'rushing' | 'retreating';
+// Shrieking Coil artifact: creatures within this many tiles of the player are
+// sent fleeing out to this far. See artifacts.ts / frightenAll below.
+export const COIL_TRIGGER_RADIUS = 10;
+export const COIL_FLEE_DISTANCE  = 15;
+
+// Worklight Lantern artifact: the inverse of the Shrieking Coil — while lit,
+// idle predators within this many tiles are drawn straight into stalking the
+// player, overriding their own (often shorter) detection radius. See
+// artifacts.ts / the `worklightOn` param on moveAnimals/update below.
+export const WORKLIGHT_ATTRACT_RADIUS = 15;
+
+type PredatorState = 'idle' | 'stalking' | 'rushing' | 'retreating' | 'fleeing';
+
+const RARITY_WEIGHT: Record<Rarity, number> = {
+  common:   100,
+  uncommon:  20,
+  rare:       4,
+  mythical:   0.3,
+};
 
 // ── Animal roster ──────────────────────────────────────────────────────────
 
@@ -48,7 +68,10 @@ const ANIMAL_DEFS: AnimalDef[] = [
   { emoji: '🦃', name: 'Turkey',       biomes: ['plains','forest'],                       rarity: 'common',   fleeRadius: 4,  fleeSpeed: 7.5,  wanderSpeed: 0.7,  meatLbs:    8, furPelts: 0, size: 16, hp: 1, prey: true  },
   { emoji: '🦆', name: 'Duck',         biomes: ['beach','swamp'],                         rarity: 'common',   fleeRadius: 4,  fleeSpeed: 8.0,  wanderSpeed: 1.0,  meatLbs:    2, furPelts: 0, size: 13, hp: 1, prey: true  },
   // Predators
-  { emoji: '🐻', name: 'Bear',         biomes: ['forest','hills','mountains'],             rarity: 'uncommon', fleeRadius: 0,  fleeSpeed: 0,    wanderSpeed: 0.5,  meatLbs:  200, furPelts: 1, size: 26, hp: 2, prey: false, detectionRadius:  7, attackDamage: 25, aggression: 0.25 },
+  { emoji: '🐻', name: 'Bear',         biomes: ['forest'],                                rarity: 'uncommon', fleeRadius: 0,  fleeSpeed: 0,    wanderSpeed: 0.5,  meatLbs:  200, furPelts: 1, size: 26, hp: 3, prey: false, detectionRadius:  7, attackDamage: 25, aggression: 0.25 },
+  // Bear is halved in hills/mountains — goats below make up the other half of that slot.
+  { emoji: '🐻', name: 'Bear',         biomes: ['hills','mountains'],                     rarity: 'uncommon', weight: RARITY_WEIGHT.uncommon / 2, fleeRadius: 0,  fleeSpeed: 0,    wanderSpeed: 0.5,  meatLbs:  200, furPelts: 1, size: 26, hp: 3, prey: false, detectionRadius:  7, attackDamage: 25, aggression: 0.25 },
+  { emoji: '🐐', name: 'Goat',         biomes: ['hills','mountains'],                     rarity: 'uncommon', weight: RARITY_WEIGHT.uncommon / 2, fleeRadius: 5,  fleeSpeed: 8.0,  wanderSpeed: 0.9,  meatLbs:   35, furPelts: 1, size: 18, hp: 1, prey: true  },
   { emoji: '🦊', name: 'Fox',          biomes: ['plains','forest','hills','snow'],         rarity: 'uncommon', fleeRadius: 6,  fleeSpeed: 9.0,  wanderSpeed: 1.0,  meatLbs:    5, furPelts: 1, size: 15, hp: 1, prey: true  },
   { emoji: '🐺', name: 'Wolf',         biomes: ['forest','hills','mountains','snow'],      rarity: 'uncommon', fleeRadius: 5,  fleeSpeed: 5.5,  wanderSpeed: 0.8,  meatLbs:   40, furPelts: 1, size: 18, hp: 1, prey: false, nocturnal: true, detectionRadius: 12, attackDamage: 15, aggression: 0.30 },
   { emoji: '🦅', name: 'Eagle',        biomes: ['mountains','hills','snow'],               rarity: 'uncommon', fleeRadius: 8,  fleeSpeed: 11.0, wanderSpeed: 1.5,  meatLbs:    3, furPelts: 0, size: 16, hp: 1, prey: true,  detectionRadius: 12, attackDamage: 10, aggression: 0.15 },
@@ -68,13 +91,6 @@ const ANIMAL_DEFS: AnimalDef[] = [
 ];
 
 export const RIFLE_RANGE = 10; // tiles
-
-const RARITY_WEIGHT: Record<Rarity, number> = {
-  common:   100,
-  uncommon:  20,
-  rare:       4,
-  mythical:   0.3,
-};
 
 const MAX_ANIMALS          = 40;
 const MAX_NOCTURNAL_ANIMALS =  8; // wolves/trolls only spawn at night — cap them separately
@@ -146,11 +162,15 @@ function isLand(biome: Biome): boolean {
   return biome !== 'deep_water' && biome !== 'shallow_water';
 }
 
+function spawnWeight(d: AnimalDef): number {
+  return d.weight ?? RARITY_WEIGHT[d.rarity];
+}
+
 function pickWeighted(defs: AnimalDef[]): AnimalDef {
-  const total = defs.reduce((s, d) => s + RARITY_WEIGHT[d.rarity], 0);
+  const total = defs.reduce((s, d) => s + spawnWeight(d), 0);
   let r = Math.random() * total;
   for (const d of defs) {
-    r -= RARITY_WEIGHT[d.rarity];
+    r -= spawnWeight(d);
     if (r <= 0) return d;
   }
   return defs[defs.length - 1];
@@ -159,7 +179,8 @@ function pickWeighted(defs: AnimalDef[]): AnimalDef {
 function tooltipText(def: AnimalDef): string {
   const meat = def.meatLbs > 0 ? `~${def.meatLbs} lbs` : '—';
   const fur  = def.furPelts > 0 ? `${def.furPelts} pelt` : '—';
-  return `${def.name}\nMeat  ${meat}\nFur   ${fur}`;
+  const temperament = def.prey ? 'Passive — flees' : 'Aggressive — will attack';
+  return `${def.name}\n${temperament}\nMeat  ${meat}\nFur   ${fur}`;
 }
 
 // Returns true if this animal uses the predator AI (either a true predator or a man-eater)
@@ -222,13 +243,13 @@ export class AnimalManager {
   }
 
   // Returns attack events {damage} for hits taken this frame.
-  update(delta: number, playerX: number, playerY: number, daysTraveled: number, playerMoving = true): { damage: number }[] {
+  update(delta: number, playerX: number, playerY: number, daysTraveled: number, playerMoving = true, worklightOn = false): { damage: number }[] {
     this.lastPlayerX = playerX;
     this.lastPlayerY = playerY;
     const isDay = isDaylightFrac(daysTraveled);
     this.despawn(playerX, playerY);
     this.spawn(playerX, playerY, isDay);
-    const attacks = this.moveAnimals(delta, playerX, playerY, isDay, playerMoving);
+    const attacks = this.moveAnimals(delta, playerX, playerY, isDay, playerMoving, worklightOn);
     this.reposition();
     return attacks;
   }
@@ -302,6 +323,27 @@ export class AnimalManager {
       a.targetY = a.y + (dy / dist) * 10;
       a.wanderTimer = WANDER_RETARGET;
     }
+  }
+
+  // Shrieking Coil artifact: every aggressive creature (predators and man-eaters
+  // alike — unlike the Bone Whistle, this one doesn't spare man-eaters) within
+  // COIL_TRIGGER_RADIUS tiles of the player flees out to COIL_FLEE_DISTANCE.
+  // Returns how many creatures were affected, for the activation message.
+  frightenAll(playerX: number, playerY: number): number {
+    let affected = 0;
+    for (const a of this.animals) {
+      if (a.dead || a.hidden) continue;
+      if (!usesPredatorAI(a)) continue;
+      const dx = a.x - playerX, dy = a.y - playerY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > COIL_TRIGGER_RADIUS) continue;
+      const len = dist || 1;
+      a.predatorState = 'fleeing';
+      a.targetX = a.x + (dx / len) * COIL_FLEE_DISTANCE;
+      a.targetY = a.y + (dy / len) * COIL_FLEE_DISTANCE;
+      affected++;
+    }
+    return affected;
   }
 
   // Description of a living animal on the given tile (for click-inspect).
@@ -532,7 +574,7 @@ export class AnimalManager {
   }
 
   // Returns attack events for this frame.
-  private moveAnimals(delta: number, px: number, py: number, isDay: boolean, playerMoving: boolean): { damage: number }[] {
+  private moveAnimals(delta: number, px: number, py: number, isDay: boolean, playerMoving: boolean, worklightOn = false): { damage: number }[] {
     const attacks: { damage: number }[] = [];
 
     for (const a of this.animals) {
@@ -556,7 +598,12 @@ export class AnimalManager {
 
         switch (a.predatorState) {
           case 'idle':
-            if (distToPlayer < detR) {
+            if (worklightOn && distToPlayer <= WORKLIGHT_ATTRACT_RADIUS) {
+              // The lantern's glow overrides normal detection range and
+              // aggression rolls entirely — anything within range comes looking.
+              a.predatorState = 'stalking';
+              a.ignoreTimer = 0;
+            } else if (distToPlayer < detR) {
               if (a.ignoreTimer <= 0) {
                 const agg = a.isManEater ? 1.0 : (a.def.aggression ?? 1.0);
                 if (Math.random() < agg) {
@@ -610,6 +657,19 @@ export class AnimalManager {
               a.predatorState = distToPlayer > detR * 1.5 ? 'idle' : 'stalking';
             }
             break;
+
+          case 'fleeing': {
+            // Scared off by the Shrieking Coil. Once it's covered most of the
+            // flee distance, settle back to idle with the same "back off"
+            // cooldown used when a predator randomly declines to stalk, so it
+            // doesn't immediately turn around and re-engage.
+            const remaining = Math.hypot(a.targetX - a.x, a.targetY - a.y);
+            if (remaining < 0.5) {
+              a.predatorState = 'idle';
+              a.ignoreTimer = 20 + Math.random() * 15;
+            }
+            break;
+          }
         }
 
         // Move toward target
@@ -618,6 +678,7 @@ export class AnimalManager {
         if (tdist > 0.05) {
           const mult = a.predatorState === 'rushing' ? RUSH_SPEED_MULT
                      : a.predatorState === 'retreating' ? 1.5
+                     : a.predatorState === 'fleeing' ? FLEE_SPEED_MULT
                      : 1.0;
           const step = Math.min(speedBase * mult * delta, tdist);
           a.x += (tdx / tdist) * step;
