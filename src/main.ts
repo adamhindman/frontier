@@ -612,12 +612,11 @@ window.addEventListener("keyup", (e) => {
     // so every later lone Cmd press sees "an arrow is held" and redirects
     // auto-walk instead of cancelling it, even though nothing is physically
     // pressed anymore. Releasing Cmd is a natural checkpoint to clear that
-    // stuck state out. Tradeoff: if an arrow key genuinely is still held the
-    // instant Cmd comes up, this drops it too (no new keydown will arrive to
-    // restore it since it was never released) — at worst that's one key that
-    // needs re-pressing to resume a temporary strafe override, far cheaper
-    // than auto-walk being permanently impossible to cancel.
-    input.reset();
+    // stuck state out. Only stale directions are cleared (no keydown/repeat
+    // recently) — a plain input.reset() here would also wipe out arrows that
+    // are still genuinely held, which broke double-tapping Cmd while
+    // steering (each tap's keyup would cancel auto-walk outright).
+    input.resetStale(250);
   }
 });
 

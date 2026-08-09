@@ -583,8 +583,11 @@ export class AnimalManager {
       if (a.ignoreTimer   > 0) a.ignoreTimer   = Math.max(0, a.ignoreTimer   - delta);
       if (a.dead) continue;
 
-      // Day/night visibility
-      const visible = a.def.nocturnal ? !isDay : isDay;
+      // Day/night visibility — man-eaters are exempt: a quest is already
+      // tracking them down, and having them vanish (or a nocturnal one never
+      // appear at all) mid-hunt just because the clock crossed dawn/dusk is
+      // more frustrating than a natural exception to the rule is confusing.
+      const visible = a.isManEater || (a.def.nocturnal ? !isDay : isDay);
       a.hidden = !visible;
       if (!visible) continue;
 
